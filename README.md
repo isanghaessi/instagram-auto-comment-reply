@@ -79,7 +79,7 @@ https://your-domain.example.com
    - `instagram_business_manage_comments`
    - `instagram_business_manage_messages`
    - `instagram_manage_engagement`
-5. 연결할 Instagram Professional(Creator/Business) 계정을 앱 설정/역할 사용자로 접근 가능하게 둡니다.
+5. 본인이 소유하거나 관리 권한을 가진 Instagram Professional(Creator/Business) 계정을 앱 설정/역할 사용자로 접근 가능하게 둡니다.
 6. 앱 리뷰와 Business Verification 전에는 앱 role user/tester 범위에서 사용하세요.
 
 ## 사용 흐름
@@ -104,7 +104,7 @@ https://your-domain.example.com
 - `ADMIN_PASSWORD`는 16자 이상 랜덤 문자열을 권장합니다.
 - `ENCRYPTION_KEY`를 분실하면 저장된 Instagram access token을 복호화할 수 없습니다.
 - `ENCRYPTION_KEY`가 유출되면 `.env`와 DB를 함께 가진 공격자가 token을 복호화할 수 있으므로 안전하게 보관하세요.
-- `instagram_manage_engagement` 권한이 없으면 DM 성공 후 댓글 좋아요 기능이 실패할 수 있습니다.
+- `instagram_manage_engagement` 권한이 없으면 DM 성공 후 댓글 좋아요 기능이 실패할 수 있으므로, 운영 전 해당 기능을 비활성화하거나 권한을 확보하세요.
 - 이 MVP는 Instagram Webhook을 사용하지 않고 polling만 사용합니다.
 - 여러 서버 인스턴스를 동시에 띄우는 구성은 권장하지 않습니다. 단일 프로세스/단일 SQLite 파일 기준 MVP입니다.
 - 중복 DM 방지를 위해 `(rule, comment)` 선점 로그를 먼저 생성합니다. 프로세스가 중간에 죽어도 같은 댓글에 DM을 재발송하지 않는 쪽을 우선합니다.
