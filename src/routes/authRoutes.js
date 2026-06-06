@@ -3,8 +3,7 @@ import {
   AUTH_COOKIE,
   SESSION_MAX_AGE_SECONDS,
   createLoginThrottle,
-  createSession,
-  destroySession,
+  createSessionStore,
   requireAdmin,
   requireSameOrigin
 } from '../security/auth.js';
@@ -37,7 +36,7 @@ function loginPage(showError = false, throttled = false) {
     </section>`);
 }
 
-export function createAuthRoutes(config, sessionStore = { createSession, destroySession }, loginThrottle = createLoginThrottle()) {
+export function createAuthRoutes(config, sessionStore = createSessionStore(), loginThrottle = createLoginThrottle()) {
   const router = Router();
 
   router.get('/login', (req, res) => {

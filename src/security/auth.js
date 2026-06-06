@@ -4,6 +4,7 @@ export const AUTH_COOKIE = 'ig_auto_reply_auth';
 export const SESSION_MAX_AGE_SECONDS = 12 * 60 * 60;
 export const LOGIN_THROTTLE_WINDOW_MS = 15 * 60 * 1000;
 export const LOGIN_THROTTLE_MAX_FAILURES = 5;
+export const LOGIN_THROTTLE_MAX_KEYS = 1000;
 
 function createSessionToken() {
   return crypto.randomBytes(32).toString('hex');
@@ -49,7 +50,8 @@ export function createSessionStore() {
 
 export function createLoginThrottle({
   windowMs = LOGIN_THROTTLE_WINDOW_MS,
-  maxFailures = LOGIN_THROTTLE_MAX_FAILURES
+  maxFailures = LOGIN_THROTTLE_MAX_FAILURES,
+  maxKeys = LOGIN_THROTTLE_MAX_KEYS
 } = {}) {
   const failures = new Map();
 
@@ -62,6 +64,16 @@ export function createLoginThrottle({
       if (entry.resetAt <= now) {
         failures.delete(key);
       }
+    }
+  }
+
+  function evictOldestIfNeeded() {
+    while (failures.size > maxKeys) {
+      const oldestKey = failures.keys().next().value;
+      if (oldestKey === undefined) {
+        return;
+      }
+      failures.delete(oldestKey);
     }
   }
 
@@ -78,6 +90,7 @@ export function createLoginThrottle({
       const existing = failures.get(key);
       if (!existing || existing.resetAt <= now) {
         failures.set(key, { count: 1, resetAt: now + windowMs });
+        evictOldestIfNeeded();
         return;
       }
       existing.count += 1;

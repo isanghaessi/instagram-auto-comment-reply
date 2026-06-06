@@ -20,9 +20,10 @@ const server = app.listen(config.port, () => {
   poller.start();
 });
 
-function shutdown(signal) {
+async function shutdown(signal) {
   console.log(`Received ${signal}; shutting down Instagram auto reply admin`);
   poller.stop();
+  await poller.drain();
   server.close((error) => {
     if (error) {
       console.error('HTTP server shutdown failed', error);

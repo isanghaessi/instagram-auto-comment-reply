@@ -341,8 +341,15 @@ test('createPoller starts one immediate run, reports active run, and stops inter
     assert.deepEqual(poller.getStatus(), { running: true, activeRun: true });
     assert.equal(runCount, 1);
 
-    resolveRun();
+    let drained = false;
+    const drainPromise = poller.drain().then(() => {
+      drained = true;
+    });
     await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(drained, false);
+
+    resolveRun();
+    await drainPromise;
     poller.stop();
 
     assert.deepEqual(poller.getStatus(), { running: false, activeRun: false });

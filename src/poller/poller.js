@@ -294,6 +294,7 @@ export async function runPollingOnce({ db, instagramClient, encryptionKey, now =
 export function createPoller({ db, instagramClient, encryptionKey, intervalSeconds }) {
   let timer = null;
   let activeRun = false;
+  let activeRunPromise = null;
 
   async function tick() {
     if (activeRun) {
@@ -301,12 +302,20 @@ export function createPoller({ db, instagramClient, encryptionKey, intervalSecon
     }
 
     activeRun = true;
+    activeRunPromise = (async () => {
+      try {
+        await runPollingOnce({ db, instagramClient, encryptionKey });
+      } catch (error) {
+        console.error('Polling run failed', { error: errorMessage(error) });
+      } finally {
+        activeRun = false;
+        activeRunPromise = null;
+      }
+    })();
     try {
-      await runPollingOnce({ db, instagramClient, encryptionKey });
+      await activeRunPromise;
     } catch (error) {
       console.error('Polling run failed', { error: errorMessage(error) });
-    } finally {
-      activeRun = false;
     }
   }
 
@@ -323,6 +332,12 @@ export function createPoller({ db, instagramClient, encryptionKey, intervalSecon
       if (timer) {
         clearInterval(timer);
         timer = null;
+      }
+    },
+
+    async drain() {
+      if (activeRunPromise) {
+        await activeRunPromise;
       }
     },
 
