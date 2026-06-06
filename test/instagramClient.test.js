@@ -143,10 +143,34 @@ test('read methods request graph fields and return data arrays with fallback', a
   const mediaUrl = new URL(fetchImpl.calls[1].url);
   assert.equal(mediaUrl.pathname, '/me/media');
   assert.equal(mediaUrl.searchParams.get('fields'), 'id,caption,media_type,media_url,thumbnail_url,permalink,timestamp');
+  assert.equal(mediaUrl.searchParams.get('limit'), '50');
 
   const commentsUrl = new URL(fetchImpl.calls[3].url);
   assert.equal(commentsUrl.pathname, '/media-1/comments');
   assert.equal(commentsUrl.searchParams.get('fields'), 'id,text,username,from,timestamp');
+  assert.equal(commentsUrl.searchParams.get('limit'), '50');
+});
+
+test('read methods follow bounded pagination for media and comments', async () => {
+  const responses = [
+    okJson({ data: [{ id: 'media-1' }], paging: { next: 'https://graph.instagram.com/me/media?after=cursor-1&access_token=token' } }),
+    okJson({ data: [{ id: 'media-2' }] }),
+    okJson({ data: [{ id: 'comment-1' }], paging: { next: 'https://graph.instagram.com/media-1/comments?after=cursor-2&access_token=token' } }),
+    okJson({ data: [{ id: 'comment-2' }] })
+  ];
+  const fetchImpl = async (url, options = {}) => {
+    fetchImpl.calls.push({ url: String(url), options });
+    return responses.shift();
+  };
+  fetchImpl.calls = [];
+  const client = createInstagramClient({ config, fetchImpl });
+
+  assert.deepEqual(await client.listMedia('token'), [{ id: 'media-1' }, { id: 'media-2' }]);
+  assert.deepEqual(await client.listComments('token', 'media-1'), [{ id: 'comment-1' }, { id: 'comment-2' }]);
+
+  assert.equal(fetchImpl.calls.length, 4);
+  assert.equal(new URL(fetchImpl.calls[1].url).searchParams.get('after'), 'cursor-1');
+  assert.equal(new URL(fetchImpl.calls[3].url).searchParams.get('after'), 'cursor-2');
 });
 
 test('write methods post JSON bodies to graph API', async () => {

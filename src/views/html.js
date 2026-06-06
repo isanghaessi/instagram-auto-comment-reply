@@ -13,7 +13,7 @@ export function escapeHtml(value) {
 export function layout(title, body) {
   const safeTitle = escapeHtml(title);
   return `<!doctype html>
-<html lang="en">
+<html lang="ko">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">

@@ -15,6 +15,8 @@ const ACCOUNT_FIELDS = ['id', 'username', 'account_type'];
 const MEDIA_FIELDS = ['id', 'caption', 'media_type', 'media_url', 'thumbnail_url', 'permalink', 'timestamp'];
 const COMMENT_FIELDS = ['id', 'text', 'username', 'from', 'timestamp'];
 const RAW_BODY_LIMIT = 1024;
+const READ_PAGE_LIMIT = 50;
+const MAX_READ_PAGES = 10;
 
 function appendSearchParams(url, params) {
   for (const [key, value] of Object.entries(params)) {
@@ -146,6 +148,22 @@ function dataArray(body) {
   return Array.isArray(body?.data) ? body.data : [];
 }
 
+async function requestPagedData(fetchImpl, firstUrl) {
+  const items = [];
+  let nextUrl = firstUrl;
+  let pageCount = 0;
+
+  while (nextUrl && pageCount < MAX_READ_PAGES) {
+    const response = await requestJson(fetchImpl, nextUrl);
+    items.push(...dataArray(response));
+    const next = typeof response?.paging?.next === 'string' ? response.paging.next : null;
+    nextUrl = next ? new URL(next) : null;
+    pageCount += 1;
+  }
+
+  return items;
+}
+
 export function createInstagramClient({ config, fetchImpl = fetch }) {
   return {
     buildAuthorizeUrl(state) {
@@ -204,19 +222,19 @@ export function createInstagramClient({ config, fetchImpl = fetch }) {
     },
 
     async listMedia(accessToken) {
-      const response = await requestJson(fetchImpl, buildUrl(GRAPH_BASE_URL, '/me/media', {
+      return requestPagedData(fetchImpl, buildUrl(GRAPH_BASE_URL, '/me/media', {
         fields: MEDIA_FIELDS.join(','),
+        limit: READ_PAGE_LIMIT,
         access_token: accessToken
       }));
-      return dataArray(response);
     },
 
     async listComments(accessToken, instagramMediaId) {
-      const response = await requestJson(fetchImpl, buildUrl(GRAPH_BASE_URL, `/${pathSegment(instagramMediaId)}/comments`, {
+      return requestPagedData(fetchImpl, buildUrl(GRAPH_BASE_URL, `/${pathSegment(instagramMediaId)}/comments`, {
         fields: COMMENT_FIELDS.join(','),
+        limit: READ_PAGE_LIMIT,
         access_token: accessToken
       }));
-      return dataArray(response);
     },
 
     sendPrivateReply(accessToken, igUserId, commentId, message) {

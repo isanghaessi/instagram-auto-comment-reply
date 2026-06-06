@@ -104,7 +104,8 @@ https://your-domain.example.com
 - `ADMIN_PASSWORD`는 16자 이상 랜덤 문자열을 권장합니다.
 - `ENCRYPTION_KEY`를 분실하면 저장된 Instagram access token을 복호화할 수 없습니다.
 - `ENCRYPTION_KEY`가 유출되면 `.env`와 DB를 함께 가진 공격자가 token을 복호화할 수 있으므로 안전하게 보관하세요.
-- `instagram_manage_engagement` 권한이 없으면 DM 성공 후 댓글 좋아요 기능이 실패할 수 있으므로, 운영 전 해당 기능을 비활성화하거나 권한을 확보하세요.
+- 저장된 long-lived token은 만료 7일 이내 polling 전에 자동 refresh를 시도합니다. refresh가 계속 실패하면 Instagram 계정을 UI에서 다시 연결하세요.
+- 댓글 좋아요는 Meta Instagram Platform changelog의 Like Media and Comments API 기준 `POST /<IG_USER_ID>/likes` + `comment_id`를 사용합니다. `instagram_manage_engagement` 권한이 없거나 앱/계정/콘텐츠 제약에 걸리면 실패할 수 있으므로, 운영 전 해당 기능을 비활성화하거나 권한을 확보하고 `Logs`에서 실패 여부를 확인하세요.
 - 이 MVP는 Instagram Webhook을 사용하지 않고 polling만 사용합니다.
 - 여러 서버 인스턴스를 동시에 띄우는 구성은 권장하지 않습니다. 단일 프로세스/단일 SQLite 파일 기준 MVP입니다.
 - 중복 DM 방지를 위해 `(rule, comment)` 선점 로그를 먼저 생성합니다. 프로세스가 중간에 죽어도 같은 댓글에 DM을 재발송하지 않는 쪽을 우선합니다.
@@ -118,7 +119,7 @@ PUBLIC_BASE_URL=https://example.com \
 META_APP_ID=app-id \
 META_APP_SECRET=secret \
 META_REDIRECT_URI=https://example.com/auth/instagram/callback \
-ADMIN_PASSWORD=admin-password \
+ADMIN_PASSWORD=replace-with-strong-random-password \
 POLLING_INTERVAL_SECONDS=60 \
 PORT=3000 \
 npm start

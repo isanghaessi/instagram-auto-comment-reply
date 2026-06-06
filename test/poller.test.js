@@ -6,19 +6,19 @@ import { upsertMedia } from '../src/repositories/media.js';
 import { createRule } from '../src/repositories/rules.js';
 import { upsertCommentEvent } from '../src/repositories/comments.js';
 import { createReplyLog, findReplyLog } from '../src/repositories/replyLogs.js';
-import { encryptText } from '../src/security/crypto.js';
+import { decryptText, encryptText } from '../src/security/crypto.js';
 import { InstagramApiError } from '../src/instagram/errors.js';
 import { createPoller, runPollingOnce } from '../src/poller/poller.js';
 
 const encryptionKey = Buffer.alloc(32, 9);
 
-function insertAccount(db) {
+function insertAccount(db, overrides = {}) {
   upsertAccount(db, {
     instagramUserId: 'ig-user-1',
     username: 'creator',
     accountType: 'BUSINESS',
-    accessTokenEncrypted: encryptText('plain-token', encryptionKey),
-    tokenExpiresAt: '2026-08-01T00:00:00.000Z'
+    accessTokenEncrypted: encryptText(overrides.token ?? 'plain-token', encryptionKey),
+    tokenExpiresAt: overrides.tokenExpiresAt ?? '2026-08-01T00:00:00.000Z'
   });
 }
 
@@ -71,6 +71,10 @@ function createInstagramClient(overrides = {}) {
     async replyToComment(token, commentId, message) {
       calls.push(['replyToComment', token, commentId, message]);
       return { id: 'fallback-comment-1' };
+    },
+    async refreshLongLivedToken(token) {
+      calls.push(['refreshLongLivedToken', token]);
+      return { accessToken: 'refreshed-token', expiresIn: 60 * 24 * 60 * 60 };
     },
     ...overrides
   };
@@ -260,6 +264,37 @@ test('runPollingOnce skips duplicate reply logs', async () => {
 
     assert.deepEqual(result, { processed: 0 });
     assert.deepEqual(callNames(instagramClient), ['listComments']);
+  } finally {
+    db.close();
+  }
+});
+
+test('runPollingOnce refreshes long-lived token near expiry before reading comments', async () => {
+  const { db } = createTestDb();
+  try {
+    insertAccount(db, {
+      token: 'expiring-token',
+      tokenExpiresAt: '2026-06-07T00:00:00.000Z'
+    });
+    insertMediaAndRule(db);
+    const instagramClient = createInstagramClient();
+
+    const result = await runPollingOnce({
+      db,
+      instagramClient,
+      encryptionKey,
+      now: new Date('2026-06-06T00:00:00.000Z')
+    });
+
+    assert.deepEqual(result, { processed: 1 });
+    assert.deepEqual(callNames(instagramClient), ['refreshLongLivedToken', 'listComments', 'sendPrivateReply', 'likeComment']);
+    assert.deepEqual(instagramClient.calls[0], ['refreshLongLivedToken', 'expiring-token']);
+    assert.deepEqual(instagramClient.calls[1], ['listComments', 'refreshed-token', 'media-1']);
+
+    const account = db.prepare('SELECT * FROM accounts WHERE id = 1').get();
+    assert.equal(decryptText(account.access_token_encrypted, encryptionKey), 'refreshed-token');
+    assert.equal(account.token_expires_at, '2026-08-05T00:00:00.000Z');
+    assert.notEqual(account.token_last_refreshed_at, null);
   } finally {
     db.close();
   }

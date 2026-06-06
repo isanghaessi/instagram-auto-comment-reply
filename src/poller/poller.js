@@ -1,10 +1,12 @@
-import { getAccount } from '../repositories/accounts.js';
+import { getAccount, updateTokenRefresh } from '../repositories/accounts.js';
 import { upsertCommentEvent } from '../repositories/comments.js';
 import { claimReplyLog, updateReplyLog } from '../repositories/replyLogs.js';
 import { listActiveRules } from '../repositories/rules.js';
 import { isDeliverabilityError } from '../instagram/errors.js';
-import { decryptText } from '../security/crypto.js';
+import { decryptText, encryptText } from '../security/crypto.js';
 import { matchesRule } from './matcher.js';
+
+const TOKEN_REFRESH_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 function groupRulesByMedia(rules) {
   const grouped = new Map();
@@ -67,6 +69,45 @@ function sanitizeValue(value, token) {
 
 function jsonPayload(value, token) {
   return JSON.stringify(sanitizeValue(value, token));
+}
+
+function tokenExpiresAt(expiresIn, nowMs) {
+  const seconds = Number(expiresIn);
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    return null;
+  }
+  return new Date(nowMs + (seconds * 1000)).toISOString();
+}
+
+function shouldRefreshToken(account, nowMs) {
+  if (!account.token_expires_at) {
+    return false;
+  }
+  const expiresAtMs = Date.parse(account.token_expires_at);
+  if (!Number.isFinite(expiresAtMs)) {
+    return false;
+  }
+  return expiresAtMs <= nowMs + TOKEN_REFRESH_WINDOW_MS;
+}
+
+async function accessTokenForPolling({ db, account, instagramClient, encryptionKey, nowMs }) {
+  const currentToken = decryptText(account.access_token_encrypted, encryptionKey);
+  if (!shouldRefreshToken(account, nowMs)) {
+    return currentToken;
+  }
+
+  const refreshed = await instagramClient.refreshLongLivedToken(currentToken);
+  const refreshedToken = refreshed?.accessToken;
+  if (typeof refreshedToken !== 'string' || refreshedToken === '') {
+    throw new Error('Instagram token refresh did not return an access token');
+  }
+
+  updateTokenRefresh(
+    db,
+    encryptText(refreshedToken, encryptionKey),
+    tokenExpiresAt(refreshed?.expiresIn, nowMs)
+  );
+  return refreshedToken;
 }
 
 function fallbackReplyId(response) {
@@ -168,13 +209,19 @@ async function processClaimedComment({ db, instagramClient, token, account, rule
   }
 }
 
-export async function runPollingOnce({ db, instagramClient, encryptionKey }) {
+export async function runPollingOnce({ db, instagramClient, encryptionKey, now = new Date() }) {
   const account = getAccount(db);
   if (!account) {
     return { processed: 0 };
   }
 
-  const token = decryptText(account.access_token_encrypted, encryptionKey);
+  const token = await accessTokenForPolling({
+    db,
+    account,
+    instagramClient,
+    encryptionKey,
+    nowMs: now.getTime()
+  });
   const rulesByMedia = groupRulesByMedia(listActiveRules(db));
   let processed = 0;
 
