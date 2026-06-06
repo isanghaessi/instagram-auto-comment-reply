@@ -44,10 +44,10 @@ function requireValue(value, name) {
   return value;
 }
 
-export function instagramAuthRoutes({ config, db, instagramClient }) {
+export function instagramAuthRoutes({ config, db, instagramClient, sessionStore }) {
   const router = Router();
 
-  router.get('/auth/instagram/start', requireAdmin(config), (req, res, next) => {
+  router.get('/auth/instagram/start', requireAdmin(config, sessionStore), (req, res, next) => {
     try {
       const state = createOAuthState(db);
       res.redirect(instagramClient.buildAuthorizeUrl(state));

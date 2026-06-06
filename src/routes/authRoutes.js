@@ -33,7 +33,7 @@ function loginPage(showError = false) {
     </section>`);
 }
 
-export function createAuthRoutes(config) {
+export function createAuthRoutes(config, sessionStore = { createSession, destroySession }) {
   const router = Router();
 
   router.get('/login', (req, res) => {
@@ -42,7 +42,7 @@ export function createAuthRoutes(config) {
 
   router.post('/login', (req, res) => {
     if (req.body?.password === config.adminPassword) {
-      res.cookie(AUTH_COOKIE, createSession(), authCookieOptions(config));
+      res.cookie(AUTH_COOKIE, sessionStore.createSession(), authCookieOptions(config));
       res.redirect('/');
       return;
     }
@@ -55,7 +55,7 @@ export function createAuthRoutes(config) {
   });
 
   router.post('/logout', (req, res) => {
-    destroySession(req.cookies?.[AUTH_COOKIE]);
+    sessionStore.destroySession(req.cookies?.[AUTH_COOKIE]);
     res.cookie(AUTH_COOKIE, '', {
       ...authCookieOptions(config),
       maxAge: 0

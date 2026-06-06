@@ -5,6 +5,7 @@ import { AUTH_COOKIE } from '../src/security/auth.js';
 import { decryptText, encryptText } from '../src/security/crypto.js';
 import { getAccount, upsertAccount } from '../src/repositories/accounts.js';
 import { upsertMedia } from '../src/repositories/media.js';
+import { createRule } from '../src/repositories/rules.js';
 import { createServer } from '../src/server.js';
 import { createTestDb } from './helpers/testDb.js';
 
@@ -135,6 +136,28 @@ test('authenticated session cookie can access dashboard', async () => {
     assert.match(html, /Polling status/);
   } finally {
     db.close();
+  }
+});
+
+
+
+test('session cookie from one app instance cannot authenticate another app instance', async () => {
+  const dbA = createTestDb();
+  const dbB = createTestDb();
+  const appA = testApp({ db: dbA.db });
+  const appB = testApp({ db: dbB.db });
+
+  try {
+    const cookie = await authenticatedCookie(appA);
+    const response = await request(appB, '/', {
+      headers: { Cookie: cookie }
+    });
+
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/login');
+  } finally {
+    dbA.db.close();
+    dbB.db.close();
   }
 });
 
@@ -630,6 +653,203 @@ test('rule create, edit, toggle, and delete routes mutate rules without exposing
 
     const missingEditResponse = await request(app, `/rules/${created.id}/edit`, { headers: { Cookie: cookie } });
     assert.equal(missingEditResponse.status, 404);
+  } finally {
+    db.close();
+  }
+});
+
+
+test('invalid rule create and update render friendly validation errors without mutating rules', async () => {
+  const { db } = createTestDb();
+  const mediaId = upsertMedia(db, {
+    instagramMediaId: 'media-1',
+    caption: 'safe caption',
+    mediaType: 'IMAGE',
+    mediaUrl: null,
+    thumbnailUrl: null,
+    permalink: 'https://instagram.example/p/1',
+    timestamp: '2026-06-06T12:00:00+0000'
+  });
+  const existingRuleId = createRule(db, {
+    mediaId,
+    name: 'Existing rule',
+    matchMode: 'contains_any',
+    keywordText: 'hello',
+    replyMessage: 'reply',
+    dmFailureReplyMessage: 'fallback',
+    isActive: true
+  });
+  const app = testApp({ db });
+
+  try {
+    const cookie = await authenticatedCookie(app);
+    const missingFieldsResponse = await request(app, '/rules', {
+      method: 'POST',
+      headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formBody({ mediaId: '', name: ' ', keywordText: '', replyMessage: ' ', dmFailureReplyMessage: '' })
+    });
+    const missingFieldsHtml = await missingFieldsResponse.text();
+    const unknownMediaResponse = await request(app, '/rules', {
+      method: 'POST',
+      headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formBody({ mediaId: '999', name: 'Name', keywordText: 'keyword', replyMessage: 'reply', dmFailureReplyMessage: 'fallback' })
+    });
+    const invalidUpdateResponse = await request(app, `/rules/${existingRuleId}`, {
+      method: 'POST',
+      headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formBody({ mediaId: 'abc', name: '', keywordText: ' ', replyMessage: '', dmFailureReplyMessage: ' ' })
+    });
+    const invalidUpdateHtml = await invalidUpdateResponse.text();
+    const ruleCount = db.prepare('SELECT COUNT(*) AS count FROM automation_rules').get().count;
+    const existingRule = db.prepare('SELECT * FROM automation_rules WHERE id = ?').get(existingRuleId);
+
+    assert.equal(missingFieldsResponse.status, 422);
+    assert.match(missingFieldsHtml, /Rule validation failed/);
+    assert.match(missingFieldsHtml, /media/i);
+    assert.equal(unknownMediaResponse.status, 422);
+    assert.equal(invalidUpdateResponse.status, 422);
+    assert.match(invalidUpdateHtml, /Rule validation failed/);
+    assert.equal(ruleCount, 1);
+    assert.equal(existingRule.name, 'Existing rule');
+    assert.equal(existingRule.keyword_text, 'hello');
+  } finally {
+    db.close();
+  }
+});
+
+test('missing or deleted rule toggle returns not found', async () => {
+  const { db } = createTestDb();
+  const mediaId = upsertMedia(db, {
+    instagramMediaId: 'media-1',
+    caption: 'safe caption',
+    mediaType: 'IMAGE',
+    mediaUrl: null,
+    thumbnailUrl: null,
+    permalink: 'https://instagram.example/p/1',
+    timestamp: '2026-06-06T12:00:00+0000'
+  });
+  const ruleId = createRule(db, {
+    mediaId,
+    name: 'To delete',
+    matchMode: 'contains_any',
+    keywordText: 'hello',
+    replyMessage: 'reply',
+    dmFailureReplyMessage: 'fallback',
+    isActive: true
+  });
+  const app = testApp({ db });
+
+  try {
+    const cookie = await authenticatedCookie(app);
+    const missingResponse = await request(app, '/rules/999/toggle', {
+      method: 'POST',
+      headers: { Cookie: cookie }
+    });
+    const deleteResponse = await request(app, `/rules/${ruleId}/delete`, {
+      method: 'POST',
+      headers: { Cookie: cookie }
+    });
+    const deletedToggleResponse = await request(app, `/rules/${ruleId}/toggle`, {
+      method: 'POST',
+      headers: { Cookie: cookie }
+    });
+
+    assert.equal(missingResponse.status, 404);
+    assert.equal(deleteResponse.status, 302);
+    assert.equal(deletedToggleResponse.status, 404);
+  } finally {
+    db.close();
+  }
+});
+
+test('unauthenticated POST actions redirect to login', async () => {
+  const { db } = createTestDb();
+  const mediaId = upsertMedia(db, {
+    instagramMediaId: 'media-1',
+    caption: 'safe caption',
+    mediaType: 'IMAGE',
+    mediaUrl: null,
+    thumbnailUrl: null,
+    permalink: 'https://instagram.example/p/1',
+    timestamp: '2026-06-06T12:00:00+0000'
+  });
+  const ruleId = createRule(db, {
+    mediaId,
+    name: 'Protected rule',
+    matchMode: 'contains_any',
+    keywordText: 'hello',
+    replyMessage: 'reply',
+    dmFailureReplyMessage: 'fallback',
+    isActive: true
+  });
+  const app = testApp({ db });
+  const actions = [
+    ['/media/sync', formBody({})],
+    ['/rules', formBody({ mediaId: String(mediaId), name: 'Name', keywordText: 'keyword', replyMessage: 'reply', dmFailureReplyMessage: 'fallback' })],
+    [`/rules/${ruleId}`, formBody({ mediaId: String(mediaId), name: 'Name', keywordText: 'keyword', replyMessage: 'reply', dmFailureReplyMessage: 'fallback' })],
+    [`/rules/${ruleId}/toggle`, formBody({})],
+    [`/rules/${ruleId}/delete`, formBody({})]
+  ];
+
+  try {
+    for (const [path, body] of actions) {
+      const response = await request(app, path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body
+      });
+      assert.equal(response.status, 302, path);
+      assert.equal(response.headers.get('location'), '/login', path);
+    }
+  } finally {
+    db.close();
+  }
+});
+
+test('media, rules, and edit pages escape dynamic values and avoid unsafe media links', async () => {
+  const { db } = createTestDb();
+  const mediaId = upsertMedia(db, {
+    instagramMediaId: 'media-<xss>',
+    caption: '<img src=x onerror=alert(1)>',
+    mediaType: 'IMAGE',
+    mediaUrl: null,
+    thumbnailUrl: null,
+    permalink: 'javascript:alert(1)',
+    timestamp: '2026-06-06T12:00:00+0000'
+  });
+  const ruleId = createRule(db, {
+    mediaId,
+    name: '<script>alert(1)</script>',
+    matchMode: 'contains_any',
+    keywordText: '<b>keyword</b>',
+    replyMessage: '<i>reply</i>',
+    dmFailureReplyMessage: '<u>fallback</u>',
+    isActive: true
+  });
+  const app = testApp({ db });
+
+  try {
+    const cookie = await authenticatedCookie(app);
+    const mediaResponse = await request(app, '/media', { headers: { Cookie: cookie } });
+    const mediaHtml = await mediaResponse.text();
+    const rulesResponse = await request(app, '/rules', { headers: { Cookie: cookie } });
+    const rulesHtml = await rulesResponse.text();
+    const editResponse = await request(app, `/rules/${ruleId}/edit`, { headers: { Cookie: cookie } });
+    const editHtml = await editResponse.text();
+
+    assert.equal(mediaResponse.status, 200);
+    assert.equal(rulesResponse.status, 200);
+    assert.equal(editResponse.status, 200);
+    assert.doesNotMatch(mediaHtml, /<img src=x onerror=alert\(1\)>/);
+    assert.doesNotMatch(mediaHtml, /href="javascript:alert\(1\)"/i);
+    assert.match(mediaHtml, /&lt;img src=x onerror=alert\(1\)&gt;/);
+    assert.doesNotMatch(rulesHtml, /<script>alert\(1\)<\/script>/);
+    assert.doesNotMatch(rulesHtml, /<b>keyword<\/b>/);
+    assert.match(rulesHtml, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+    assert.match(rulesHtml, /confirm\(/);
+    assert.doesNotMatch(editHtml, /<i>reply<\/i>/);
+    assert.doesNotMatch(editHtml, /<u>fallback<\/u>/);
+    assert.match(editHtml, /&lt;i&gt;reply&lt;\/i&gt;/);
   } finally {
     db.close();
   }

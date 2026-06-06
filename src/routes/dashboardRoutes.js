@@ -87,10 +87,10 @@ ${mediaRows(mediaItems)}
     </section>`);
 }
 
-export function dashboardRoutes({ config, db, instagramClient, poller }) {
+export function dashboardRoutes({ config, db, instagramClient, poller, sessionStore }) {
   const router = Router();
 
-  router.get('/', requireAdmin(config), (req, res, next) => {
+  router.get('/', requireAdmin(config, sessionStore), (req, res, next) => {
     try {
       res.type('html').send(dashboardHtml({ account: getAccount(db), poller }));
     } catch (error) {
@@ -98,7 +98,7 @@ export function dashboardRoutes({ config, db, instagramClient, poller }) {
     }
   });
 
-  router.post('/media/sync', requireAdmin(config), async (req, res, next) => {
+  router.post('/media/sync', requireAdmin(config, sessionStore), async (req, res, next) => {
     try {
       const account = getAccount(db);
       if (!account) {
@@ -118,7 +118,7 @@ export function dashboardRoutes({ config, db, instagramClient, poller }) {
     }
   });
 
-  router.get('/media', requireAdmin(config), (req, res, next) => {
+  router.get('/media', requireAdmin(config, sessionStore), (req, res, next) => {
     try {
       res.type('html').send(mediaHtml(listMedia(db)));
     } catch (error) {

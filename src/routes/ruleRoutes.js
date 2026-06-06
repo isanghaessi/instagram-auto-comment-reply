@@ -15,9 +15,22 @@ function asString(value) {
   return typeof value === 'string' ? value : '';
 }
 
-function requestedRule(body) {
-  return {
-    mediaId: Number.parseInt(asString(body?.mediaId), 10),
+function parsePositiveInteger(value) {
+  const text = asString(value).trim();
+  if (!/^[1-9]\d*$/.test(text)) {
+    return null;
+  }
+  return Number.parseInt(text, 10);
+}
+
+function hasMedia(mediaItems, mediaId) {
+  return mediaItems.some((media) => Number(media.id) === mediaId);
+}
+
+function requestedRule(body, mediaItems) {
+  const mediaId = parsePositiveInteger(body?.mediaId);
+  const rule = {
+    mediaId,
     name: asString(body?.name).trim(),
     matchMode: 'contains_any',
     keywordText: asString(body?.keywordText).trim(),
@@ -25,6 +38,27 @@ function requestedRule(body) {
     dmFailureReplyMessage: asString(body?.dmFailureReplyMessage).trim(),
     isActive: body?.isActive === 'on'
   };
+  const errors = [];
+
+  if (mediaId === null) {
+    errors.push('Please choose a valid media item.');
+  } else if (!hasMedia(mediaItems, mediaId)) {
+    errors.push('Selected media item does not exist.');
+  }
+  if (rule.name === '') {
+    errors.push('Rule name is required.');
+  }
+  if (rule.keywordText === '') {
+    errors.push('Keywords are required.');
+  }
+  if (rule.replyMessage === '') {
+    errors.push('DM reply message is required.');
+  }
+  if (rule.dmFailureReplyMessage === '') {
+    errors.push('Fallback public reply is required.');
+  }
+
+  return { rule, errors };
 }
 
 function mediaLabel(media) {
@@ -88,7 +122,7 @@ ${rules.map((rule) => `          <tr>
               <form method="post" action="/rules/${escapeHtml(rule.id)}/toggle" style="display:inline">
                 <button type="submit">${rule.is_active ? 'Pause' : 'Resume'}</button>
               </form>
-              <form method="post" action="/rules/${escapeHtml(rule.id)}/delete" style="display:inline">
+              <form method="post" action="/rules/${escapeHtml(rule.id)}/delete" style="display:inline" onsubmit="return confirm('Delete this rule?')">
                 <button type="submit">Delete</button>
               </form>
             </td>
@@ -117,6 +151,18 @@ ${ruleForm({ mediaItems, rule, action: `/rules/${rule.id}`, submitLabel: 'Update
     </section>`);
 }
 
+function sendValidationError(res, errors) {
+  const errorItems = errors.map((error) => `        <li>${escapeHtml(error)}</li>`).join('\n');
+  res.status(422).type('html').send(layout('Rule validation failed', `    <section class="card">
+      <h2>Rule validation failed</h2>
+      <p class="error">Please fix the rule form and try again.</p>
+      <ul>
+${errorItems}
+      </ul>
+      <p><a href="/rules">Back to rules</a></p>
+    </section>`));
+}
+
 function sendNotFound(res) {
   res.status(404).type('html').send(layout('Rule not found', `    <section class="card">
       <h2>Rule not found</h2>
@@ -125,10 +171,10 @@ function sendNotFound(res) {
     </section>`));
 }
 
-export function ruleRoutes({ config, db }) {
+export function ruleRoutes({ config, db, sessionStore }) {
   const router = Router();
 
-  router.get('/rules', requireAdmin(config), (req, res, next) => {
+  router.get('/rules', requireAdmin(config, sessionStore), (req, res, next) => {
     try {
       res.type('html').send(rulesPage({ mediaItems: listMedia(db), rules: listRules(db) }));
     } catch (error) {
@@ -136,16 +182,22 @@ export function ruleRoutes({ config, db }) {
     }
   });
 
-  router.post('/rules', requireAdmin(config), (req, res, next) => {
+  router.post('/rules', requireAdmin(config, sessionStore), (req, res, next) => {
     try {
-      createRule(db, requestedRule(req.body));
+      const mediaItems = listMedia(db);
+      const { rule, errors } = requestedRule(req.body, mediaItems);
+      if (errors.length > 0) {
+        sendValidationError(res, errors);
+        return;
+      }
+      createRule(db, rule);
       res.redirect('/rules');
     } catch (error) {
       next(error);
     }
   });
 
-  router.get('/rules/:id/edit', requireAdmin(config), (req, res, next) => {
+  router.get('/rules/:id/edit', requireAdmin(config, sessionStore), (req, res, next) => {
     try {
       const rule = getRule(db, req.params.id);
       if (!rule) {
@@ -158,9 +210,20 @@ export function ruleRoutes({ config, db }) {
     }
   });
 
-  router.post('/rules/:id', requireAdmin(config), (req, res, next) => {
+  router.post('/rules/:id', requireAdmin(config, sessionStore), (req, res, next) => {
     try {
-      if (!updateRule(db, req.params.id, requestedRule(req.body))) {
+      const existingRule = getRule(db, req.params.id);
+      if (!existingRule) {
+        sendNotFound(res);
+        return;
+      }
+      const mediaItems = listMedia(db);
+      const { rule, errors } = requestedRule(req.body, mediaItems);
+      if (errors.length > 0) {
+        sendValidationError(res, errors);
+        return;
+      }
+      if (!updateRule(db, req.params.id, rule)) {
         sendNotFound(res);
         return;
       }
@@ -170,21 +233,24 @@ export function ruleRoutes({ config, db }) {
     }
   });
 
-  router.post('/rules/:id/toggle', requireAdmin(config), (req, res, next) => {
+  router.post('/rules/:id/toggle', requireAdmin(config, sessionStore), (req, res, next) => {
     try {
       const rule = getRule(db, req.params.id);
       if (!rule) {
         sendNotFound(res);
         return;
       }
-      setRuleActive(db, req.params.id, !rule.is_active);
+      if (!setRuleActive(db, req.params.id, !rule.is_active)) {
+        sendNotFound(res);
+        return;
+      }
       res.redirect('/rules');
     } catch (error) {
       next(error);
     }
   });
 
-  router.post('/rules/:id/delete', requireAdmin(config), (req, res, next) => {
+  router.post('/rules/:id/delete', requireAdmin(config, sessionStore), (req, res, next) => {
     try {
       if (!softDeleteRule(db, req.params.id)) {
         sendNotFound(res);
