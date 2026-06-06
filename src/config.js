@@ -10,14 +10,22 @@ function required(env, key) {
 
 function parseInteger(value, fallback, name) {
   if (value === undefined || value === '') return fallback;
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
+  const text = String(value).trim();
+  if (!/^[1-9]\d*$/.test(text)) {
     throw new Error(`Invalid integer environment variable: ${name}`);
   }
-  return parsed;
+  return Number(text);
+}
+
+function isCanonicalBase64(value) {
+  return /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)
+    && Buffer.from(value, 'base64').toString('base64') === value;
 }
 
 function parseEncryptionKey(value) {
+  if (!isCanonicalBase64(value)) {
+    throw new Error('ENCRYPTION_KEY must be valid base64');
+  }
   const key = Buffer.from(value, 'base64');
   if (key.length !== 32) {
     throw new Error('ENCRYPTION_KEY must decode to exactly 32 bytes');

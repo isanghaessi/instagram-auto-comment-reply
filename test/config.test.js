@@ -34,3 +34,43 @@ test('loadConfig rejects invalid encryption key', () => {
     ADMIN_PASSWORD: 'pass1234'
   }), /ENCRYPTION_KEY/);
 });
+
+
+test('loadConfig rejects PORT with trailing characters', () => {
+  assert.throws(() => loadConfig({
+    DATABASE_PATH: './tmp/app.db',
+    PUBLIC_BASE_URL: 'https://example.com',
+    META_APP_ID: 'app-id',
+    META_APP_SECRET: 'secret',
+    META_REDIRECT_URI: 'https://example.com/auth/instagram/callback',
+    ENCRYPTION_KEY: Buffer.alloc(32, 1).toString('base64'),
+    ADMIN_PASSWORD: 'pass1234',
+    PORT: '3000abc'
+  }), /PORT/);
+});
+
+test('loadConfig rejects fractional polling interval', () => {
+  assert.throws(() => loadConfig({
+    DATABASE_PATH: './tmp/app.db',
+    PUBLIC_BASE_URL: 'https://example.com',
+    META_APP_ID: 'app-id',
+    META_APP_SECRET: 'secret',
+    META_REDIRECT_URI: 'https://example.com/auth/instagram/callback',
+    ENCRYPTION_KEY: Buffer.alloc(32, 1).toString('base64'),
+    ADMIN_PASSWORD: 'pass1234',
+    POLLING_INTERVAL_SECONDS: '1.5'
+  }), /POLLING_INTERVAL_SECONDS/);
+});
+
+test('loadConfig rejects encryption key with trailing invalid character', () => {
+  const validKey = Buffer.alloc(32, 1).toString('base64');
+  assert.throws(() => loadConfig({
+    DATABASE_PATH: './tmp/app.db',
+    PUBLIC_BASE_URL: 'https://example.com',
+    META_APP_ID: 'app-id',
+    META_APP_SECRET: 'secret',
+    META_REDIRECT_URI: 'https://example.com/auth/instagram/callback',
+    ENCRYPTION_KEY: `${validKey}!`,
+    ADMIN_PASSWORD: 'pass1234'
+  }), /ENCRYPTION_KEY/);
+});

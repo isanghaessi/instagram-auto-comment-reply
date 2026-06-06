@@ -1,5 +1,43 @@
 import crypto from 'node:crypto';
 
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function decodeCanonicalBase64(value) {
+  if (typeof value !== 'string') {
+    throw new Error('Invalid encrypted value');
+  }
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
+    throw new Error('Invalid encrypted value');
+  }
+  const decoded = Buffer.from(value, 'base64');
+  if (decoded.toString('base64') !== value) {
+    throw new Error('Invalid encrypted value');
+  }
+  return decoded;
+}
+
+function parseEncryptedValue(encryptedValue) {
+  const parsed = JSON.parse(encryptedValue);
+  if (!isPlainObject(parsed)) {
+    throw new Error('Invalid encrypted value');
+  }
+  if (parsed.v !== 1 || typeof parsed.iv !== 'string' || typeof parsed.tag !== 'string' || typeof parsed.data !== 'string') {
+    throw new Error('Invalid encrypted value');
+  }
+
+  const iv = decodeCanonicalBase64(parsed.iv);
+  const tag = decodeCanonicalBase64(parsed.tag);
+  const data = decodeCanonicalBase64(parsed.data);
+
+  if (iv.length !== 12 || tag.length !== 16) {
+    throw new Error('Invalid encrypted value');
+  }
+
+  return { iv, tag, data };
+}
+
 export function encryptText(plainText, key) {
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
@@ -15,14 +53,11 @@ export function encryptText(plainText, key) {
 
 export function decryptText(encryptedValue, key) {
   try {
-    const parsed = JSON.parse(encryptedValue);
-    if (parsed.v !== 1 || !parsed.iv || !parsed.tag || !parsed.data) {
-      throw new Error('Invalid encrypted value');
-    }
-    const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(parsed.iv, 'base64'));
-    decipher.setAuthTag(Buffer.from(parsed.tag, 'base64'));
+    const { iv, tag, data } = parseEncryptedValue(encryptedValue);
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(tag);
     return Buffer.concat([
-      decipher.update(Buffer.from(parsed.data, 'base64')),
+      decipher.update(data),
       decipher.final()
     ]).toString('utf8');
   } catch (error) {
