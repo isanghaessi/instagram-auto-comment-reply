@@ -52,6 +52,24 @@ function authCookieHeader(setCookie) {
   return cookiePair;
 }
 
+async function authenticatedCookie(app) {
+  const loginResponse = await request(app, '/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: formBody({ password: 'admin-secret' })
+  });
+  return authCookieHeader(loginResponse.headers.get('set-cookie'));
+}
+
+async function startInstagramOAuth(app) {
+  const cookie = await authenticatedCookie(app);
+  const response = await request(app, '/auth/instagram/start', {
+    headers: { Cookie: cookie }
+  });
+  assert.equal(response.status, 302);
+  return new URL(response.headers.get('location')).searchParams.get('state');
+}
+
 function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
@@ -218,18 +236,50 @@ test('GET /auth/instagram/callback rejects an unknown state without requiring ad
   }
 });
 
-test('GET /auth/instagram/callback renders provider errors with escaped description', async () => {
+test('GET /auth/instagram/callback rejects provider errors with missing or unknown state', async () => {
   const { db } = createTestDb();
   const app = testApp({ db });
 
   try {
-    const response = await request(app, '/auth/instagram/callback?error=access_denied&error_description=%3Cscript%3Ebad()%3C%2Fscript%3E');
+    const missingStateResponse = await request(app, '/auth/instagram/callback?error=access_denied&error_description=provider-message');
+    const missingStateHtml = await missingStateResponse.text();
+    const unknownStateResponse = await request(app, '/auth/instagram/callback?error=access_denied&error_description=provider-message&state=missing-state');
+    const unknownStateHtml = await unknownStateResponse.text();
+
+    assert.equal(missingStateResponse.status, 400);
+    assert.match(missingStateHtml, /Invalid or expired Instagram OAuth state/);
+    assert.doesNotMatch(missingStateHtml, /provider-message/);
+    assert.equal(unknownStateResponse.status, 400);
+    assert.match(unknownStateHtml, /Invalid or expired Instagram OAuth state/);
+    assert.doesNotMatch(unknownStateHtml, /provider-message/);
+  } finally {
+    db.close();
+  }
+});
+
+test('GET /auth/instagram/callback renders provider errors with escaped description after consuming valid state', async () => {
+  const { db } = createTestDb();
+  const app = testApp({
+    db,
+    instagramClient: {
+      buildAuthorizeUrl: (state) => `https://instagram.example/oauth?state=${state}`
+    }
+  });
+
+  try {
+    const state = await startInstagramOAuth(app);
+    const response = await request(app, `/auth/instagram/callback?error=access_denied&error_description=%3Cscript%3Ebad()%3C%2Fscript%3E&state=${state}`);
     const html = await response.text();
+    const repeatResponse = await request(app, `/auth/instagram/callback?error=access_denied&error_description=second-message&state=${state}`);
+    const repeatHtml = await repeatResponse.text();
 
     assert.equal(response.status, 400);
-    assert.match(html, /Instagram connection failed/);
+    assert.match(html, /Instagram did not authorize the connection/);
     assert.match(html, /&lt;script&gt;bad\(\)&lt;\/script&gt;/);
     assert.doesNotMatch(html, /<script>bad\(\)<\/script>/);
+    assert.equal(repeatResponse.status, 400);
+    assert.match(repeatHtml, /Invalid or expired Instagram OAuth state/);
+    assert.doesNotMatch(repeatHtml, /second-message/);
   } finally {
     db.close();
   }
@@ -299,6 +349,61 @@ test('GET /auth/instagram/callback exchanges tokens, saves encrypted account, an
     const repeatResponse = await request(app, `/auth/instagram/callback?code=auth-code-2&state=${state}`);
     assert.equal(repeatResponse.status, 400);
     assert.equal(calls.length, 4);
+  } finally {
+    db.close();
+  }
+});
+
+test('GET /auth/instagram/callback stores null token expiry for missing or invalid expiresIn values', async () => {
+  for (const expiresIn of [null, undefined, '', Number.NaN, Infinity, -1]) {
+    const { db } = createTestDb();
+    const instagramClient = {
+      buildAuthorizeUrl: (state) => `https://instagram.example/oauth?state=${state}`,
+      exchangeCodeForShortLivedToken: async () => ({ accessToken: 'short-token' }),
+      exchangeForLongLivedToken: async () => ({ accessToken: 'long-token', expiresIn }),
+      getAccount: async () => ({ id: `ig-user-${String(expiresIn)}`, username: 'creator', account_type: 'BUSINESS' })
+    };
+    const app = testApp({ db, instagramClient });
+
+    try {
+      const state = await startInstagramOAuth(app);
+      const response = await request(app, `/auth/instagram/callback?code=auth-code&state=${state}`);
+      const account = getAccount(db);
+
+      assert.equal(response.status, 302);
+      assert.equal(account.token_expires_at, null);
+    } finally {
+      db.close();
+    }
+  }
+});
+
+test('GET /auth/instagram/callback renders generic failure without leaking exchange errors or saving account', async () => {
+  const { db } = createTestDb();
+  const leakedToken = 'fake-access-token-should-not-appear';
+  const leakedSecret = 'fake-client-secret-should-not-appear';
+  const internalMessage = 'internal oauth exchange failure should not appear';
+  const instagramClient = {
+    buildAuthorizeUrl: (state) => `https://instagram.example/oauth?state=${state}`,
+    exchangeCodeForShortLivedToken: async () => ({ accessToken: 'short-token' }),
+    exchangeForLongLivedToken: async () => ({ accessToken: leakedToken, expiresIn: 3600 }),
+    getAccount: async () => {
+      throw new Error(`${internalMessage}: ${leakedToken} ${leakedSecret}`);
+    }
+  };
+  const app = testApp({ db, instagramClient });
+
+  try {
+    const state = await startInstagramOAuth(app);
+    const response = await request(app, `/auth/instagram/callback?code=auth-code&state=${state}`);
+    const html = await response.text();
+
+    assert.equal(response.status, 502);
+    assert.match(html, /Unable to connect Instagram\. Please try again\./);
+    assert.doesNotMatch(html, new RegExp(leakedToken));
+    assert.doesNotMatch(html, new RegExp(leakedSecret));
+    assert.doesNotMatch(html, new RegExp(internalMessage));
+    assert.equal(getAccount(db), null);
   } finally {
     db.close();
   }

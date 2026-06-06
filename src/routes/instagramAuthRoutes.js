@@ -26,6 +26,10 @@ function queryStringValue(value) {
 }
 
 function tokenExpiresAt(expiresIn) {
+  if (expiresIn === null || expiresIn === undefined || expiresIn === '') {
+    return null;
+  }
+
   const seconds = Number(expiresIn);
   if (!Number.isFinite(seconds) || seconds < 0) {
     return null;
@@ -53,6 +57,12 @@ export function instagramAuthRoutes({ config, db, instagramClient }) {
   });
 
   router.get('/auth/instagram/callback', async (req, res) => {
+    const state = queryStringValue(req.query.state);
+    if (!state || !consumeOAuthState(db, state)) {
+      sendFailure(res, 400, 'Invalid or expired Instagram OAuth state.');
+      return;
+    }
+
     const providerError = queryStringValue(req.query.error);
     if (providerError) {
       sendFailure(
@@ -65,9 +75,8 @@ export function instagramAuthRoutes({ config, db, instagramClient }) {
     }
 
     const code = queryStringValue(req.query.code);
-    const state = queryStringValue(req.query.state);
-    if (!code || !state || !consumeOAuthState(db, state)) {
-      sendFailure(res, 400, 'Invalid or expired Instagram OAuth state.');
+    if (!code) {
+      sendFailure(res, 400, 'Missing Instagram OAuth code.');
       return;
     }
 
