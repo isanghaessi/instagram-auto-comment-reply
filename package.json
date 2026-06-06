@@ -13,7 +13,7 @@
     "test:unit": "node --test test/*.test.js"
   },
   "dependencies": {
-    "better-sqlite3": "^11.10.0",
+    "better-sqlite3": "^12.10.0",
     "cookie-parser": "^1.4.7",
     "dotenv": "^16.5.0",
     "express": "^5.1.0"
