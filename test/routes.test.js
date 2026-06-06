@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { AUTH_COOKIE } from '../src/security/auth.js';
-import { decryptText } from '../src/security/crypto.js';
-import { getAccount } from '../src/repositories/accounts.js';
+import { decryptText, encryptText } from '../src/security/crypto.js';
+import { getAccount, upsertAccount } from '../src/repositories/accounts.js';
+import { upsertMedia } from '../src/repositories/media.js';
 import { createServer } from '../src/server.js';
 import { createTestDb } from './helpers/testDb.js';
 
@@ -113,22 +114,28 @@ test('POST /login failure redirects without setting auth cookie', async () => {
 });
 
 test('authenticated session cookie can access dashboard', async () => {
-  const app = testApp();
-  const loginResponse = await request(app, '/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: formBody({ password: 'admin-secret' })
-  });
-  const cookie = authCookieHeader(loginResponse.headers.get('set-cookie'));
+  const { db } = createTestDb();
+  const app = testApp({ db });
 
-  const response = await request(app, '/', {
-    headers: { Cookie: cookie }
-  });
-  const html = await response.text();
+  try {
+    const loginResponse = await request(app, '/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formBody({ password: 'admin-secret' })
+    });
+    const cookie = authCookieHeader(loginResponse.headers.get('set-cookie'));
 
-  assert.equal(response.status, 200);
-  assert.match(html, /Dashboard/);
-  assert.match(html, /Polling status/);
+    const response = await request(app, '/', {
+      headers: { Cookie: cookie }
+    });
+    const html = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.match(html, /Dashboard/);
+    assert.match(html, /Polling status/);
+  } finally {
+    db.close();
+  }
 });
 
 test('forged cookie value cannot access dashboard', async () => {
@@ -166,25 +173,31 @@ test('POST /logout destroys session and clears cookie', async () => {
 });
 
 test('GET /logout does not clear cookie', async () => {
-  const app = testApp();
-  const loginResponse = await request(app, '/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: formBody({ password: 'admin-secret' })
-  });
-  const cookie = authCookieHeader(loginResponse.headers.get('set-cookie'));
+  const { db } = createTestDb();
+  const app = testApp({ db });
 
-  const logoutResponse = await request(app, '/logout', {
-    headers: { Cookie: cookie }
-  });
-  const dashboardResponse = await request(app, '/', {
-    headers: { Cookie: cookie }
-  });
+  try {
+    const loginResponse = await request(app, '/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formBody({ password: 'admin-secret' })
+    });
+    const cookie = authCookieHeader(loginResponse.headers.get('set-cookie'));
 
-  assert.equal(logoutResponse.status, 302);
-  assert.equal(logoutResponse.headers.get('location'), '/');
-  assert.equal(logoutResponse.headers.get('set-cookie'), null);
-  assert.equal(dashboardResponse.status, 200);
+    const logoutResponse = await request(app, '/logout', {
+      headers: { Cookie: cookie }
+    });
+    const dashboardResponse = await request(app, '/', {
+      headers: { Cookie: cookie }
+    });
+
+    assert.equal(logoutResponse.status, 302);
+    assert.equal(logoutResponse.headers.get('location'), '/');
+    assert.equal(logoutResponse.headers.get('set-cookie'), null);
+    assert.equal(dashboardResponse.status, 200);
+  } finally {
+    db.close();
+  }
 });
 
 test('authenticated GET /auth/instagram/start redirects to Instagram authorize URL with stored state', async () => {
@@ -404,6 +417,219 @@ test('GET /auth/instagram/callback renders generic failure without leaking excha
     assert.doesNotMatch(html, new RegExp(leakedSecret));
     assert.doesNotMatch(html, new RegExp(internalMessage));
     assert.equal(getAccount(db), null);
+  } finally {
+    db.close();
+  }
+});
+
+
+test('authenticated GET /rules returns rule management page', async () => {
+  const { db } = createTestDb();
+  const app = testApp({ db });
+
+  try {
+    const cookie = await authenticatedCookie(app);
+    const response = await request(app, '/rules', {
+      headers: { Cookie: cookie }
+    });
+    const html = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.match(html, /자동응답 룰/);
+  } finally {
+    db.close();
+  }
+});
+
+test('POST /media/sync decrypts saved token, persists Instagram media, and redirects to rules', async () => {
+  const { db } = createTestDb();
+  const config = testConfig();
+  const calls = [];
+  const instagramClient = {
+    async listMedia(token) {
+      calls.push(token);
+      return [
+        {
+          id: 'media-1',
+          caption: 'hello <script>bad()</script>',
+          media_type: 'IMAGE',
+          media_url: 'https://cdn.example/media-1.jpg',
+          thumbnail_url: 'https://cdn.example/thumb-1.jpg',
+          permalink: 'https://instagram.example/p/1',
+          timestamp: '2026-06-06T12:00:00+0000'
+        },
+        {
+          id: 'media-2',
+          caption: null,
+          media_type: 'VIDEO',
+          media_url: null,
+          thumbnail_url: null,
+          permalink: 'https://instagram.example/p/2',
+          timestamp: '2026-06-05T12:00:00+0000'
+        }
+      ];
+    }
+  };
+  upsertAccount(db, {
+    instagramUserId: 'ig-user-1',
+    username: 'creator',
+    accountType: 'BUSINESS',
+    accessTokenEncrypted: encryptText('long-lived-token', config.encryptionKey),
+    tokenExpiresAt: null
+  });
+  const app = createServer({ config, db, instagramClient, poller: { getStatus: () => ({ running: true }) } });
+
+  try {
+    const cookie = await authenticatedCookie(app);
+    const response = await request(app, '/media/sync', {
+      method: 'POST',
+      headers: { Cookie: cookie }
+    });
+    const media = db.prepare('SELECT instagram_media_id, caption, media_type, media_url, thumbnail_url, permalink, timestamp FROM media ORDER BY instagram_media_id').all();
+
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/rules');
+    assert.deepEqual(calls, ['long-lived-token']);
+    assert.deepEqual(media, [
+      {
+        instagram_media_id: 'media-1',
+        caption: 'hello <script>bad()</script>',
+        media_type: 'IMAGE',
+        media_url: 'https://cdn.example/media-1.jpg',
+        thumbnail_url: 'https://cdn.example/thumb-1.jpg',
+        permalink: 'https://instagram.example/p/1',
+        timestamp: '2026-06-06T12:00:00+0000'
+      },
+      {
+        instagram_media_id: 'media-2',
+        caption: null,
+        media_type: 'VIDEO',
+        media_url: null,
+        thumbnail_url: null,
+        permalink: 'https://instagram.example/p/2',
+        timestamp: '2026-06-05T12:00:00+0000'
+      }
+    ]);
+  } finally {
+    db.close();
+  }
+});
+
+
+test('POST /media/sync renders generic failure without leaking decrypted token', async () => {
+  const { db } = createTestDb();
+  const config = testConfig();
+  const leakedToken = 'long-lived-token-that-must-not-render';
+  upsertAccount(db, {
+    instagramUserId: 'ig-user-1',
+    username: 'creator',
+    accountType: 'BUSINESS',
+    accessTokenEncrypted: encryptText(leakedToken, config.encryptionKey),
+    tokenExpiresAt: null
+  });
+  const app = createServer({
+    config,
+    db,
+    instagramClient: {
+      async listMedia(token) {
+        throw new Error(`provider failed with ${token}`);
+      }
+    },
+    poller: { getStatus: () => ({ running: false }) }
+  });
+
+  try {
+    const cookie = await authenticatedCookie(app);
+    const response = await request(app, '/media/sync', {
+      method: 'POST',
+      headers: { Cookie: cookie }
+    });
+    const html = await response.text();
+
+    assert.equal(response.status, 502);
+    assert.match(html, /Unable to sync Instagram media/);
+    assert.doesNotMatch(html, new RegExp(leakedToken));
+    assert.doesNotMatch(html, /provider failed/);
+  } finally {
+    db.close();
+  }
+});
+
+test('rule create, edit, toggle, and delete routes mutate rules without exposing deleted rows', async () => {
+  const { db } = createTestDb();
+  const mediaId = upsertMedia(db, {
+    instagramMediaId: 'media-1',
+    caption: 'caption <b>unsafe</b>',
+    mediaType: 'IMAGE',
+    mediaUrl: null,
+    thumbnailUrl: null,
+    permalink: 'https://instagram.example/p/1',
+    timestamp: '2026-06-06T12:00:00+0000'
+  });
+  const app = testApp({ db });
+
+  try {
+    const cookie = await authenticatedCookie(app);
+    const createResponse = await request(app, '/rules', {
+      method: 'POST',
+      headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formBody({
+        mediaId: String(mediaId),
+        name: 'Welcome <Rule>',
+        keywordText: 'hi, hello',
+        replyMessage: 'Thanks!',
+        dmFailureReplyMessage: 'Please check DM later',
+        isActive: 'on'
+      })
+    });
+    const created = db.prepare('SELECT * FROM automation_rules').get();
+
+    assert.equal(createResponse.status, 302);
+    assert.equal(createResponse.headers.get('location'), '/rules');
+    assert.equal(created.match_mode, 'contains_any');
+    assert.equal(created.name, 'Welcome <Rule>');
+    assert.equal(created.is_active, 1);
+
+    const editPageResponse = await request(app, `/rules/${created.id}/edit`, { headers: { Cookie: cookie } });
+    const editHtml = await editPageResponse.text();
+    assert.equal(editPageResponse.status, 200);
+    assert.match(editHtml, /Welcome &lt;Rule&gt;/);
+    assert.doesNotMatch(editHtml, /Welcome <Rule>/);
+
+    const updateResponse = await request(app, `/rules/${created.id}`, {
+      method: 'POST',
+      headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formBody({
+        mediaId: String(mediaId),
+        name: 'Updated rule',
+        keywordText: 'updated',
+        replyMessage: 'Updated reply',
+        dmFailureReplyMessage: 'Updated fallback'
+      })
+    });
+    const updated = db.prepare('SELECT * FROM automation_rules WHERE id = ?').get(created.id);
+    assert.equal(updateResponse.status, 302);
+    assert.equal(updateResponse.headers.get('location'), '/rules');
+    assert.equal(updated.name, 'Updated rule');
+    assert.equal(updated.is_active, 0);
+
+    const toggleResponse = await request(app, `/rules/${created.id}/toggle`, {
+      method: 'POST',
+      headers: { Cookie: cookie }
+    });
+    assert.equal(toggleResponse.status, 302);
+    assert.equal(db.prepare('SELECT is_active FROM automation_rules WHERE id = ?').get(created.id).is_active, 1);
+
+    const deleteResponse = await request(app, `/rules/${created.id}/delete`, {
+      method: 'POST',
+      headers: { Cookie: cookie }
+    });
+    assert.equal(deleteResponse.status, 302);
+    assert.equal(db.prepare('SELECT is_active FROM automation_rules WHERE id = ?').get(created.id).is_active, 0);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM automation_rules WHERE deleted_at IS NULL').get().count, 0);
+
+    const missingEditResponse = await request(app, `/rules/${created.id}/edit`, { headers: { Cookie: cookie } });
+    assert.equal(missingEditResponse.status, 404);
   } finally {
     db.close();
   }

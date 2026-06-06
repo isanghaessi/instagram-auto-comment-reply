@@ -2,19 +2,8 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import { createAuthRoutes } from './routes/authRoutes.js';
 import { instagramAuthRoutes } from './routes/instagramAuthRoutes.js';
-import { requireAdmin } from './security/auth.js';
-import { layout, escapeHtml } from './views/html.js';
-
-function dashboardHtml(poller) {
-  const status = poller?.getStatus?.() ?? { running: false };
-  const runningText = status.running ? 'Running' : 'Stopped';
-
-  return layout('Dashboard', `    <section class="card">
-      <h2>Dashboard</h2>
-      <p>Polling status: <strong>${escapeHtml(runningText)}</strong></p>
-      <p><a class="button" href="/auth/instagram/start">Connect Instagram</a></p>
-    </section>`);
-}
+import { dashboardRoutes } from './routes/dashboardRoutes.js';
+import { ruleRoutes } from './routes/ruleRoutes.js';
 
 export function createServer({ config, db, instagramClient, poller }) {
   const app = express();
@@ -28,10 +17,8 @@ export function createServer({ config, db, instagramClient, poller }) {
   app.use(express.urlencoded({ extended: false }));
   app.use(createAuthRoutes(config));
   app.use(instagramAuthRoutes({ config, db, instagramClient }));
-
-  app.get('/', requireAdmin(config), (req, res) => {
-    res.type('html').send(dashboardHtml(poller));
-  });
+  app.use(dashboardRoutes({ config, db, instagramClient, poller }));
+  app.use(ruleRoutes({ config, db }));
 
   return app;
 }
