@@ -13,6 +13,7 @@ import { createServer } from '../src/server.js';
 import { createTestDb } from './helpers/testDb.js';
 
 const TEST_ORIGIN = 'http://localhost:3000';
+const appServers = new WeakMap();
 
 function testConfig(overrides = {}) {
   return {
@@ -36,48 +37,55 @@ function testApp(overrides = {}) {
 }
 
 async function request(app, path, options = {}) {
-  const server = app.listen(0);
-  try {
+  if (!appServers.has(app)) {
+    const server = app.listen(0);
     await new Promise((resolve) => server.once('listening', resolve));
-    const { port } = server.address();
-    return await new Promise((resolve, reject) => {
-      const req = http.request({
-        hostname: '127.0.0.1',
-        port,
-        path,
-        method: options.method ?? 'GET',
-        headers: {
-          Connection: 'close',
-          ...options.headers
-        }
-      }, (res) => {
-        res.setEncoding('utf8');
-        let body = '';
-        res.on('data', (chunk) => {
-          body += chunk;
-        });
-        res.on('end', () => {
-          resolve({
-            status: res.statusCode,
-            headers: {
-              get(name) {
-                const value = res.headers[String(name).toLowerCase()];
-                return Array.isArray(value) ? value[0] : value ?? null;
-              }
-            },
-            text: async () => body
-          });
+    server.unref();
+    appServers.set(app, { port: server.address().port });
+  }
+
+  const { port } = appServers.get(app);
+  return await new Promise((resolve, reject) => {
+    const body = options.body;
+    const headers = {
+      Connection: 'close',
+      ...options.headers
+    };
+    if (body !== undefined && headers['Content-Length'] === undefined && headers['content-length'] === undefined) {
+      headers['Content-Length'] = Buffer.byteLength(String(body));
+    }
+
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port,
+      path,
+      method: options.method ?? 'GET',
+      headers
+    }, (res) => {
+      res.setEncoding('utf8');
+      let body = '';
+      res.on('data', (chunk) => {
+        body += chunk;
+      });
+      res.on('end', () => {
+        resolve({
+          status: res.statusCode,
+          headers: {
+            get(name) {
+              const value = res.headers[String(name).toLowerCase()];
+              return Array.isArray(value) ? value[0] : value ?? null;
+            }
+          },
+          text: async () => body
         });
       });
-      req.on('error', reject);
-      if (options.body !== undefined) {
-        req.write(options.body);
-      }
-      req.end();
     });
-  } finally {
-    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-  }
+    req.on('error', reject);
+    if (body !== undefined) {
+      req.write(body);
+    }
+    req.end();
+  });
 }
 
 function sameOriginHeaders(headers = {}) {
@@ -89,6 +97,7 @@ function formBody(fields) {
 }
 
 function authCookieHeader(setCookie) {
+  assert.notEqual(setCookie, null);
   const cookiePair = setCookie.split(';')[0];
   assert.match(cookiePair, new RegExp(`^${AUTH_COOKIE}=`));
   return cookiePair;
