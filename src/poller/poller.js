@@ -1,6 +1,6 @@
 import { getAccount } from '../repositories/accounts.js';
 import { upsertCommentEvent } from '../repositories/comments.js';
-import { createReplyLog, findReplyLog } from '../repositories/replyLogs.js';
+import { claimReplyLog, updateReplyLog } from '../repositories/replyLogs.js';
 import { listActiveRules } from '../repositories/rules.js';
 import { isDeliverabilityError } from '../instagram/errors.js';
 import { decryptText } from '../security/crypto.js';
@@ -83,16 +83,7 @@ function appendError(existingMessage, nextMessage) {
   return existingMessage ? `${existingMessage}; ${nextMessage}` : nextMessage;
 }
 
-async function processMatchedComment({ db, instagramClient, token, account, rule, comment }) {
-  const commentEventId = upsertCommentEvent(db, {
-    instagramCommentId: comment.id,
-    mediaId: rule.media_id,
-    commenterId: comment.fromId,
-    commenterUsername: comment.username,
-    commentText: comment.text,
-    instagramCreatedAt: comment.timestamp
-  });
-
+async function processClaimedComment({ db, instagramClient, token, account, rule, comment, commentEventId }) {
   const requestPayload = {
     dm: {
       recipient: { comment_id: comment.id },
@@ -160,7 +151,7 @@ async function processMatchedComment({ db, instagramClient, token, account, rule
     }
   }
 
-  createReplyLog(db, {
+  const updated = updateReplyLog(db, {
     ruleId: rule.id,
     commentEventId,
     instagramCommentId: comment.id,
@@ -172,6 +163,9 @@ async function processMatchedComment({ db, instagramClient, token, account, rule
     responsePayloadJson: jsonPayload(responsePayload, token),
     errorMessage: errorMessageForLog
   });
+  if (!updated) {
+    throw new Error('Claimed reply log was not updated');
+  }
 }
 
 export async function runPollingOnce({ db, instagramClient, encryptionKey }) {
@@ -206,17 +200,37 @@ export async function runPollingOnce({ db, instagramClient, encryptionKey }) {
         if (!matchesRule(comment.text, rule)) {
           continue;
         }
-        if (findReplyLog(db, rule.id, comment.id)) {
+        let commentEventId;
+        try {
+          commentEventId = upsertCommentEvent(db, {
+            instagramCommentId: comment.id,
+            mediaId: rule.media_id,
+            commenterId: comment.fromId,
+            commenterUsername: comment.username,
+            commentText: comment.text,
+            instagramCreatedAt: comment.timestamp
+          });
+          const claimed = claimReplyLog(db, {
+            ruleId: rule.id,
+            commentEventId,
+            instagramCommentId: comment.id
+          });
+          if (!claimed) {
+            continue;
+          }
+        } catch (error) {
+          console.error('Polling reply log claim failed', {
+            ruleId: rule.id,
+            instagramCommentId: comment.id,
+            error: errorMessage(error, token)
+          });
           continue;
         }
 
         try {
-          await processMatchedComment({ db, instagramClient, token, account, rule, comment });
+          await processClaimedComment({ db, instagramClient, token, account, rule, comment, commentEventId });
           processed += 1;
         } catch (error) {
-          if (/UNIQUE constraint failed: reply_logs\.rule_id, reply_logs\.instagram_comment_id/.test(errorMessage(error, token))) {
-            continue;
-          }
           console.error('Polling comment action failed', {
             ruleId: rule.id,
             instagramCommentId: comment.id,

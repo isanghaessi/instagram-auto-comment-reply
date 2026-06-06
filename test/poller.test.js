@@ -190,6 +190,45 @@ test('runPollingOnce does not fallback on system DM failure', async () => {
   }
 });
 
+test('concurrent runs claim reply log before sending one DM', async () => {
+  const { db } = createTestDb();
+  try {
+    insertAccount(db);
+    const { ruleId } = insertMediaAndRule(db);
+    let sendPrivateReplyCount = 0;
+    const instagramClient = createInstagramClient({
+      async sendPrivateReply(token, igUserId, commentId, message) {
+        const claimedLog = findReplyLog(db, ruleId, commentId);
+        assert.equal(claimedLog.dm_status, 'skipped');
+        assert.equal(claimedLog.sent_at, null);
+        sendPrivateReplyCount += 1;
+        this.calls.push(['sendPrivateReply', token, igUserId, commentId, message]);
+        await new Promise((resolve) => setImmediate(resolve));
+        return { id: 'dm-1' };
+      }
+    });
+
+    const results = await Promise.all([
+      runPollingOnce({ db, instagramClient, encryptionKey }),
+      runPollingOnce({ db, instagramClient, encryptionKey })
+    ]);
+
+    assert.equal(sendPrivateReplyCount, 1);
+    assert.deepEqual(results.map((result) => result.processed).sort(), [0, 1]);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM reply_logs').get().count, 1);
+
+    const log = findReplyLog(db, ruleId, 'comment-1');
+    assert.equal(log.dm_status, 'sent');
+    assert.equal(log.comment_like_status, 'sent');
+    assert.equal(log.fallback_reply_status, 'skipped');
+    assert.equal(log.sent_at !== null, true);
+    assert.doesNotMatch(log.request_payload_json, /plain-token/);
+    assert.doesNotMatch(log.response_payload_json, /plain-token/);
+  } finally {
+    db.close();
+  }
+});
+
 test('runPollingOnce skips duplicate reply logs', async () => {
   const { db } = createTestDb();
   try {
