@@ -12,10 +12,12 @@ import { createReplyLog } from '../src/repositories/replyLogs.js';
 import { createServer } from '../src/server.js';
 import { createTestDb } from './helpers/testDb.js';
 
+const TEST_ORIGIN = 'http://localhost:3000';
+
 function testConfig(overrides = {}) {
   return {
     adminPassword: 'admin-secret',
-    publicBaseUrl: 'http://localhost:3000',
+    publicBaseUrl: TEST_ORIGIN,
     encryptionKey: Buffer.alloc(32, 7),
     ...overrides
   };
@@ -78,6 +80,10 @@ async function request(app, path, options = {}) {
   }
 }
 
+function sameOriginHeaders(headers = {}) {
+  return { Origin: TEST_ORIGIN, ...headers };
+}
+
 function formBody(fields) {
   return new URLSearchParams(fields).toString();
 }
@@ -100,7 +106,7 @@ async function authenticatedCookie(app) {
 async function startInstagramOAuth(app) {
   const cookie = await authenticatedCookie(app);
   const response = await request(app, '/auth/instagram/start', {
-    headers: { Cookie: cookie }
+    headers: sameOriginHeaders({ Cookie: cookie })
   });
   assert.equal(response.status, 302);
   return new URL(response.headers.get('location')).searchParams.get('state');
@@ -148,6 +154,30 @@ test('POST /login failure redirects without setting auth cookie', async () => {
   assert.equal(setCookie, null);
 });
 
+test('POST /login throttles repeated failed attempts', async () => {
+  const app = testApp();
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const response = await request(app, '/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formBody({ password: `wrong-secret-${attempt}` })
+    });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/login?error=1');
+  }
+
+  const throttledResponse = await request(app, '/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: formBody({ password: 'admin-secret' })
+  });
+  const html = await throttledResponse.text();
+
+  assert.equal(throttledResponse.status, 429);
+  assert.match(html, /Too many failed login attempts/);
+  assert.equal(throttledResponse.headers.get('set-cookie'), null);
+});
+
 test('authenticated session cookie can access dashboard', async () => {
   const { db } = createTestDb();
   const app = testApp({ db });
@@ -161,7 +191,7 @@ test('authenticated session cookie can access dashboard', async () => {
     const cookie = authCookieHeader(loginResponse.headers.get('set-cookie'));
 
     const response = await request(app, '/', {
-      headers: { Cookie: cookie }
+      headers: sameOriginHeaders({ Cookie: cookie })
     });
     const html = await response.text();
 
@@ -184,7 +214,7 @@ test('session cookie from one app instance cannot authenticate another app insta
   try {
     const cookie = await authenticatedCookie(appA);
     const response = await request(appB, '/', {
-      headers: { Cookie: cookie }
+      headers: sameOriginHeaders({ Cookie: cookie })
     });
 
     assert.equal(response.status, 302);
@@ -215,10 +245,10 @@ test('POST /logout destroys session and clears cookie', async () => {
 
   const logoutResponse = await request(app, '/logout', {
     method: 'POST',
-    headers: { Cookie: cookie }
+    headers: sameOriginHeaders({ Cookie: cookie })
   });
   const afterLogoutResponse = await request(app, '/', {
-    headers: { Cookie: cookie }
+    headers: sameOriginHeaders({ Cookie: cookie })
   });
 
   assert.equal(logoutResponse.status, 302);
@@ -242,10 +272,10 @@ test('GET /logout does not clear cookie', async () => {
     const cookie = authCookieHeader(loginResponse.headers.get('set-cookie'));
 
     const logoutResponse = await request(app, '/logout', {
-      headers: { Cookie: cookie }
+      headers: sameOriginHeaders({ Cookie: cookie })
     });
     const dashboardResponse = await request(app, '/', {
-      headers: { Cookie: cookie }
+      headers: sameOriginHeaders({ Cookie: cookie })
     });
 
     assert.equal(logoutResponse.status, 302);
@@ -277,7 +307,7 @@ test('authenticated GET /auth/instagram/start redirects to Instagram authorize U
     const cookie = authCookieHeader(loginResponse.headers.get('set-cookie'));
 
     const response = await request(app, '/auth/instagram/start', {
-      headers: { Cookie: cookie }
+      headers: sameOriginHeaders({ Cookie: cookie })
     });
     const storedState = db.prepare('SELECT state FROM oauth_states').get().state;
 
@@ -392,7 +422,7 @@ test('GET /auth/instagram/callback exchanges tokens, saves encrypted account, an
     });
     const cookie = authCookieHeader(loginResponse.headers.get('set-cookie'));
     const startResponse = await request(app, '/auth/instagram/start', {
-      headers: { Cookie: cookie }
+      headers: sameOriginHeaders({ Cookie: cookie })
     });
     const state = new URL(startResponse.headers.get('location')).searchParams.get('state');
     const before = Date.now();
@@ -525,7 +555,7 @@ test('authenticated GET /logs returns recent reply log page with escaped dynamic
 
   try {
     const cookie = await authenticatedCookie(app);
-    const response = await request(app, '/logs', { headers: { Cookie: cookie } });
+    const response = await request(app, '/logs', { headers: sameOriginHeaders({ Cookie: cookie }) });
     const html = await response.text();
 
     assert.equal(response.status, 200);
@@ -576,7 +606,7 @@ test('final 500 handler renders friendly page without stack or token leak', asyn
 
   try {
     const cookie = await authenticatedCookie(app);
-    const response = await request(app, '/logs', { headers: { Cookie: cookie } });
+    const response = await request(app, '/logs', { headers: sameOriginHeaders({ Cookie: cookie }) });
     const html = await response.text();
 
     assert.equal(response.status, 500);
@@ -598,7 +628,7 @@ test('authenticated GET /rules returns rule management page', async () => {
   try {
     const cookie = await authenticatedCookie(app);
     const response = await request(app, '/rules', {
-      headers: { Cookie: cookie }
+      headers: sameOriginHeaders({ Cookie: cookie })
     });
     const html = await response.text();
 
@@ -651,7 +681,7 @@ test('POST /media/sync decrypts saved token, persists Instagram media, and redir
     const cookie = await authenticatedCookie(app);
     const response = await request(app, '/media/sync', {
       method: 'POST',
-      headers: { Cookie: cookie }
+      headers: sameOriginHeaders({ Cookie: cookie })
     });
     const media = db.prepare('SELECT instagram_media_id, caption, media_type, media_url, thumbnail_url, permalink, timestamp FROM media ORDER BY instagram_media_id').all();
 
@@ -710,7 +740,7 @@ test('POST /media/sync renders generic failure without leaking decrypted token',
     const cookie = await authenticatedCookie(app);
     const response = await request(app, '/media/sync', {
       method: 'POST',
-      headers: { Cookie: cookie }
+      headers: sameOriginHeaders({ Cookie: cookie })
     });
     const html = await response.text();
 
@@ -740,7 +770,7 @@ test('rule create, edit, toggle, and delete routes mutate rules without exposing
     const cookie = await authenticatedCookie(app);
     const createResponse = await request(app, '/rules', {
       method: 'POST',
-      headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers: sameOriginHeaders({ Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' }),
       body: formBody({
         mediaId: String(mediaId),
         name: 'Welcome <Rule>',
@@ -758,7 +788,7 @@ test('rule create, edit, toggle, and delete routes mutate rules without exposing
     assert.equal(created.name, 'Welcome <Rule>');
     assert.equal(created.is_active, 1);
 
-    const editPageResponse = await request(app, `/rules/${created.id}/edit`, { headers: { Cookie: cookie } });
+    const editPageResponse = await request(app, `/rules/${created.id}/edit`, { headers: sameOriginHeaders({ Cookie: cookie }) });
     const editHtml = await editPageResponse.text();
     assert.equal(editPageResponse.status, 200);
     assert.match(editHtml, /Welcome &lt;Rule&gt;/);
@@ -766,7 +796,7 @@ test('rule create, edit, toggle, and delete routes mutate rules without exposing
 
     const updateResponse = await request(app, `/rules/${created.id}`, {
       method: 'POST',
-      headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers: sameOriginHeaders({ Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' }),
       body: formBody({
         mediaId: String(mediaId),
         name: 'Updated rule',
@@ -783,20 +813,20 @@ test('rule create, edit, toggle, and delete routes mutate rules without exposing
 
     const toggleResponse = await request(app, `/rules/${created.id}/toggle`, {
       method: 'POST',
-      headers: { Cookie: cookie }
+      headers: sameOriginHeaders({ Cookie: cookie })
     });
     assert.equal(toggleResponse.status, 302);
     assert.equal(db.prepare('SELECT is_active FROM automation_rules WHERE id = ?').get(created.id).is_active, 1);
 
     const deleteResponse = await request(app, `/rules/${created.id}/delete`, {
       method: 'POST',
-      headers: { Cookie: cookie }
+      headers: sameOriginHeaders({ Cookie: cookie })
     });
     assert.equal(deleteResponse.status, 302);
     assert.equal(db.prepare('SELECT is_active FROM automation_rules WHERE id = ?').get(created.id).is_active, 0);
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM automation_rules WHERE deleted_at IS NULL').get().count, 0);
 
-    const missingEditResponse = await request(app, `/rules/${created.id}/edit`, { headers: { Cookie: cookie } });
+    const missingEditResponse = await request(app, `/rules/${created.id}/edit`, { headers: sameOriginHeaders({ Cookie: cookie }) });
     assert.equal(missingEditResponse.status, 404);
   } finally {
     db.close();
@@ -830,18 +860,18 @@ test('invalid rule create and update render friendly validation errors without m
     const cookie = await authenticatedCookie(app);
     const missingFieldsResponse = await request(app, '/rules', {
       method: 'POST',
-      headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers: sameOriginHeaders({ Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' }),
       body: formBody({ mediaId: '', name: ' ', keywordText: '', replyMessage: ' ', dmFailureReplyMessage: '' })
     });
     const missingFieldsHtml = await missingFieldsResponse.text();
     const unknownMediaResponse = await request(app, '/rules', {
       method: 'POST',
-      headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers: sameOriginHeaders({ Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' }),
       body: formBody({ mediaId: '999', name: 'Name', keywordText: 'keyword', replyMessage: 'reply', dmFailureReplyMessage: 'fallback' })
     });
     const invalidUpdateResponse = await request(app, `/rules/${existingRuleId}`, {
       method: 'POST',
-      headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers: sameOriginHeaders({ Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' }),
       body: formBody({ mediaId: 'abc', name: '', keywordText: ' ', replyMessage: '', dmFailureReplyMessage: ' ' })
     });
     const invalidUpdateHtml = await invalidUpdateResponse.text();
@@ -888,20 +918,57 @@ test('missing or deleted rule toggle returns not found', async () => {
     const cookie = await authenticatedCookie(app);
     const missingResponse = await request(app, '/rules/999/toggle', {
       method: 'POST',
-      headers: { Cookie: cookie }
+      headers: sameOriginHeaders({ Cookie: cookie })
     });
     const deleteResponse = await request(app, `/rules/${ruleId}/delete`, {
       method: 'POST',
-      headers: { Cookie: cookie }
+      headers: sameOriginHeaders({ Cookie: cookie })
     });
     const deletedToggleResponse = await request(app, `/rules/${ruleId}/toggle`, {
       method: 'POST',
-      headers: { Cookie: cookie }
+      headers: sameOriginHeaders({ Cookie: cookie })
     });
 
     assert.equal(missingResponse.status, 404);
     assert.equal(deleteResponse.status, 302);
     assert.equal(deletedToggleResponse.status, 404);
+  } finally {
+    db.close();
+  }
+});
+
+test('authenticated POST actions reject cross-origin requests', async () => {
+  const { db } = createTestDb();
+  const mediaId = upsertMedia(db, {
+    instagramMediaId: 'media-1',
+    caption: 'safe caption',
+    mediaType: 'IMAGE',
+    mediaUrl: null,
+    thumbnailUrl: null,
+    permalink: 'https://instagram.example/p/1',
+    timestamp: '2026-06-06T12:00:00+0000'
+  });
+  const ruleId = createRule(db, {
+    mediaId,
+    name: 'Protected rule',
+    matchMode: 'contains_any',
+    keywordText: 'hello',
+    replyMessage: 'reply',
+    dmFailureReplyMessage: 'fallback',
+    isActive: true
+  });
+  const app = testApp({ db });
+
+  try {
+    const cookie = await authenticatedCookie(app);
+    const response = await request(app, `/rules/${ruleId}/toggle`, {
+      method: 'POST',
+      headers: { Cookie: cookie, Origin: 'https://attacker.example' }
+    });
+    const rule = db.prepare('SELECT is_active FROM automation_rules WHERE id = ?').get(ruleId);
+
+    assert.equal(response.status, 403);
+    assert.equal(rule.is_active, 1);
   } finally {
     db.close();
   }
@@ -975,11 +1042,11 @@ test('media, rules, and edit pages escape dynamic values and avoid unsafe media 
 
   try {
     const cookie = await authenticatedCookie(app);
-    const mediaResponse = await request(app, '/media', { headers: { Cookie: cookie } });
+    const mediaResponse = await request(app, '/media', { headers: sameOriginHeaders({ Cookie: cookie }) });
     const mediaHtml = await mediaResponse.text();
-    const rulesResponse = await request(app, '/rules', { headers: { Cookie: cookie } });
+    const rulesResponse = await request(app, '/rules', { headers: sameOriginHeaders({ Cookie: cookie }) });
     const rulesHtml = await rulesResponse.text();
-    const editResponse = await request(app, `/rules/${ruleId}/edit`, { headers: { Cookie: cookie } });
+    const editResponse = await request(app, `/rules/${ruleId}/edit`, { headers: sameOriginHeaders({ Cookie: cookie }) });
     const editHtml = await editResponse.text();
 
     assert.equal(mediaResponse.status, 200);

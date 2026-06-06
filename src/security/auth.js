@@ -2,6 +2,8 @@ import crypto from 'node:crypto';
 
 export const AUTH_COOKIE = 'ig_auto_reply_auth';
 export const SESSION_MAX_AGE_SECONDS = 12 * 60 * 60;
+export const LOGIN_THROTTLE_WINDOW_MS = 15 * 60 * 1000;
+export const LOGIN_THROTTLE_MAX_FAILURES = 5;
 
 function createSessionToken() {
   return crypto.randomBytes(32).toString('hex');
@@ -45,6 +47,48 @@ export function createSessionStore() {
   };
 }
 
+export function createLoginThrottle({
+  windowMs = LOGIN_THROTTLE_WINDOW_MS,
+  maxFailures = LOGIN_THROTTLE_MAX_FAILURES
+} = {}) {
+  const failures = new Map();
+
+  function keyFor(req) {
+    return req.ip || req.socket?.remoteAddress || 'unknown';
+  }
+
+  function prune(now) {
+    for (const [key, entry] of failures.entries()) {
+      if (entry.resetAt <= now) {
+        failures.delete(key);
+      }
+    }
+  }
+
+  return {
+    isLimited(req, now = Date.now()) {
+      prune(now);
+      const entry = failures.get(keyFor(req));
+      return Boolean(entry && entry.count >= maxFailures && entry.resetAt > now);
+    },
+
+    recordFailure(req, now = Date.now()) {
+      prune(now);
+      const key = keyFor(req);
+      const existing = failures.get(key);
+      if (!existing || existing.resetAt <= now) {
+        failures.set(key, { count: 1, resetAt: now + windowMs });
+        return;
+      }
+      existing.count += 1;
+    },
+
+    recordSuccess(req) {
+      failures.delete(keyFor(req));
+    }
+  };
+}
+
 const defaultSessionStore = createSessionStore();
 
 export function createSession(now = Date.now()) {
@@ -67,5 +111,36 @@ export function requireAdmin(config, sessionStore = defaultSessionStore) {
     }
 
     res.redirect('/login');
+  };
+}
+
+function requestOrigin(req) {
+  const origin = req.get?.('origin');
+  if (origin) {
+    return origin;
+  }
+
+  const referer = req.get?.('referer');
+  if (!referer) {
+    return null;
+  }
+
+  try {
+    return new URL(referer).origin;
+  } catch (error) {
+    return null;
+  }
+}
+
+export function requireSameOrigin(config) {
+  const expectedOrigin = new URL(config.publicBaseUrl).origin;
+  return (req, res, next) => {
+    const origin = requestOrigin(req);
+    if (origin === expectedOrigin) {
+      next();
+      return;
+    }
+
+    res.status(403).type('html').send('Forbidden');
   };
 }

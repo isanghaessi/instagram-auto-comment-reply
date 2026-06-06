@@ -45,6 +45,7 @@ test('escapeHtml escapes HTML-sensitive characters', () => {
 test('layout escapes title and includes admin navigation with POST logout form', () => {
   const html = layout('<Dashboard>', '<main>Body</main>');
 
+  assert.match(html, /<html lang="ko">/);
   assert.match(html, /&lt;Dashboard&gt;/);
   assert.match(html, /href="\/"[^>]*>Dashboard/);
   assert.match(html, /href="\/rules"[^>]*>Rules/);

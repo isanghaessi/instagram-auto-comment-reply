@@ -98,10 +98,10 @@ https://your-domain.example.com
 
 ## Production Notes
 
-- 반드시 HTTPS 뒤에서 실행하세요.
+- 반드시 HTTPS 뒤에서 실행하세요. 관리자 POST 액션은 `PUBLIC_BASE_URL`과 일치하는 `Origin`/`Referer`만 허용합니다.
 - `.env`는 git에 올리지 마세요.
 - `data/app.db`는 SQLite 파일 DB입니다. 서버만 띄우면 자동 생성/마이그레이션되지만, 운영에서는 디스크 persistence와 백업을 설정하세요.
-- `ADMIN_PASSWORD`는 16자 이상 랜덤 문자열을 권장합니다.
+- `ADMIN_PASSWORD`는 16자 이상 랜덤 문자열을 권장합니다. 로그인 실패는 IP 기준으로 일정 횟수 이후 일시적으로 제한됩니다.
 - `ENCRYPTION_KEY`를 분실하면 저장된 Instagram access token을 복호화할 수 없습니다.
 - `ENCRYPTION_KEY`가 유출되면 `.env`와 DB를 함께 가진 공격자가 token을 복호화할 수 있으므로 안전하게 보관하세요.
 - 저장된 long-lived token은 만료 7일 이내 polling 전에 자동 refresh를 시도합니다. refresh가 계속 실패하면 Instagram 계정을 UI에서 다시 연결하세요.

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { getAccount } from '../repositories/accounts.js';
 import { listMedia, upsertMedia } from '../repositories/media.js';
-import { requireAdmin } from '../security/auth.js';
+import { requireAdmin, requireSameOrigin } from '../security/auth.js';
 import { decryptText } from '../security/crypto.js';
 import { escapeHtml, layout } from '../views/html.js';
 
@@ -98,7 +98,7 @@ export function dashboardRoutes({ config, db, instagramClient, poller, sessionSt
     }
   });
 
-  router.post('/media/sync', requireAdmin(config, sessionStore), async (req, res, next) => {
+  router.post('/media/sync', requireAdmin(config, sessionStore), requireSameOrigin(config), async (req, res, next) => {
     try {
       const account = getAccount(db);
       if (!account) {

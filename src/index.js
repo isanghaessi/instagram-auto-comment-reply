@@ -15,7 +15,25 @@ const poller = createPoller({
 });
 const app = createServer({ config, db, instagramClient, poller });
 
-app.listen(config.port, () => {
+const server = app.listen(config.port, () => {
   console.log(`Instagram auto reply admin listening on port ${config.port}`);
   poller.start();
 });
+
+function shutdown(signal) {
+  console.log(`Received ${signal}; shutting down Instagram auto reply admin`);
+  poller.stop();
+  server.close((error) => {
+    if (error) {
+      console.error('HTTP server shutdown failed', error);
+      process.exit(1);
+      return;
+    }
+
+    db.close();
+    process.exit(0);
+  });
+}
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));

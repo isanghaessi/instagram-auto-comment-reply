@@ -8,7 +8,7 @@ import {
   softDeleteRule,
   updateRule
 } from '../repositories/rules.js';
-import { requireAdmin } from '../security/auth.js';
+import { requireAdmin, requireSameOrigin } from '../security/auth.js';
 import { escapeHtml, layout } from '../views/html.js';
 
 function asString(value) {
@@ -182,7 +182,7 @@ export function ruleRoutes({ config, db, sessionStore }) {
     }
   });
 
-  router.post('/rules', requireAdmin(config, sessionStore), (req, res, next) => {
+  router.post('/rules', requireAdmin(config, sessionStore), requireSameOrigin(config), (req, res, next) => {
     try {
       const mediaItems = listMedia(db);
       const { rule, errors } = requestedRule(req.body, mediaItems);
@@ -210,7 +210,7 @@ export function ruleRoutes({ config, db, sessionStore }) {
     }
   });
 
-  router.post('/rules/:id', requireAdmin(config, sessionStore), (req, res, next) => {
+  router.post('/rules/:id', requireAdmin(config, sessionStore), requireSameOrigin(config), (req, res, next) => {
     try {
       const existingRule = getRule(db, req.params.id);
       if (!existingRule) {
@@ -233,7 +233,7 @@ export function ruleRoutes({ config, db, sessionStore }) {
     }
   });
 
-  router.post('/rules/:id/toggle', requireAdmin(config, sessionStore), (req, res, next) => {
+  router.post('/rules/:id/toggle', requireAdmin(config, sessionStore), requireSameOrigin(config), (req, res, next) => {
     try {
       const rule = getRule(db, req.params.id);
       if (!rule) {
@@ -250,7 +250,7 @@ export function ruleRoutes({ config, db, sessionStore }) {
     }
   });
 
-  router.post('/rules/:id/delete', requireAdmin(config, sessionStore), (req, res, next) => {
+  router.post('/rules/:id/delete', requireAdmin(config, sessionStore), requireSameOrigin(config), (req, res, next) => {
     try {
       if (!softDeleteRule(db, req.params.id)) {
         sendNotFound(res);
