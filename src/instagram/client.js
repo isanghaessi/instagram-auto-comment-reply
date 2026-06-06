@@ -14,6 +14,7 @@ const INSTAGRAM_SCOPES = [
 const ACCOUNT_FIELDS = ['id', 'username', 'account_type'];
 const MEDIA_FIELDS = ['id', 'caption', 'media_type', 'media_url', 'thumbnail_url', 'permalink', 'timestamp'];
 const COMMENT_FIELDS = ['id', 'text', 'username', 'from', 'timestamp'];
+const RAW_BODY_LIMIT = 1024;
 
 function appendSearchParams(url, params) {
   for (const [key, value] of Object.entries(params)) {
@@ -33,12 +34,48 @@ function pathSegment(value) {
   return encodeURIComponent(String(value));
 }
 
-async function parseJsonResponse(response) {
-  const text = await response.text();
-  if (text === '') {
-    return null;
+function truncateRawBody(rawBody) {
+  if (typeof rawBody !== 'string') {
+    return undefined;
   }
-  return JSON.parse(text);
+  if (rawBody.length <= RAW_BODY_LIMIT) {
+    return rawBody;
+  }
+  return `${rawBody.slice(0, RAW_BODY_LIMIT)}…[truncated]`;
+}
+
+function sensitiveValuesFromUrl(url) {
+  const parsedUrl = url instanceof URL ? url : new URL(String(url));
+  return ['access_token', 'client_secret']
+    .map((key) => parsedUrl.searchParams.get(key))
+    .filter((value) => typeof value === 'string' && value.length > 0);
+}
+
+function redactSensitiveValues(message, url) {
+  let redacted = String(message || '');
+  for (const value of sensitiveValuesFromUrl(url)) {
+    redacted = redacted.split(value).join('[redacted]');
+  }
+  redacted = redacted.replace(/(access_token=)[^\s&]+/gi, '$1[redacted]');
+  redacted = redacted.replace(/(client_secret=)[^\s&]+/gi, '$1[redacted]');
+  return redacted;
+}
+
+async function parseJsonResponse(response) {
+  const rawBody = await response.text();
+  if (rawBody === '') {
+    return { body: null, rawBody: '' };
+  }
+
+  try {
+    return { body: JSON.parse(rawBody), rawBody };
+  } catch (error) {
+    return {
+      body: null,
+      rawBody: truncateRawBody(rawBody),
+      parseError: error
+    };
+  }
 }
 
 function instagramErrorDetails(body) {
@@ -52,19 +89,41 @@ function instagramErrorDetails(body) {
 
 async function requestJson(fetchImpl, url, options = {}) {
   const response = await fetchImpl(url, options);
-  const body = await parseJsonResponse(response);
+  const parsed = await parseJsonResponse(response);
 
-  if (!response.ok) {
-    const { message, code, errorSubcode } = instagramErrorDetails(body);
-    throw new InstagramApiError(message || `Instagram API request failed with status ${response.status}`, {
-      status: response.status,
-      body,
-      code,
-      errorSubcode
-    });
+  if (parsed.parseError) {
+    const rawBody = redactSensitiveValues(parsed.rawBody, url);
+    throw new InstagramApiError(
+      response.ok
+        ? 'Instagram API response JSON parse error'
+        : `Instagram API request failed with status ${response.status}`,
+      {
+        status: response.status,
+        body: {
+          rawBody,
+          parseError: parsed.parseError.message
+        },
+        rawBody
+      }
+    );
   }
 
-  return body;
+  if (!response.ok) {
+    const { message, code, errorSubcode } = instagramErrorDetails(parsed.body);
+    throw new InstagramApiError(
+      message
+        ? redactSensitiveValues(message, url)
+        : `Instagram API request failed with status ${response.status}`,
+      {
+        status: response.status,
+        body: parsed.body,
+        code,
+        errorSubcode
+      }
+    );
+  }
+
+  return parsed.body;
 }
 
 function formPost(fetchImpl, url, body) {

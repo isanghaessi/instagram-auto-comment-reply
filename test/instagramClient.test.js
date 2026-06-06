@@ -23,6 +23,13 @@ function errorJson(status, body) {
   });
 }
 
+function textResponse(status, body, contentType = 'text/plain') {
+  return new Response(body, {
+    status,
+    headers: { 'Content-Type': contentType }
+  });
+}
+
 function createRecordingFetch(response = okJson({ ok: true })) {
   const calls = [];
   const fetchImpl = async (url, options = {}) => {
@@ -163,7 +170,10 @@ test('write methods post JSON bodies to graph API', async () => {
 
   call = fetchImpl.calls[1];
   url = new URL(call.url);
+  assert.equal(url.origin, 'https://graph.instagram.com');
   assert.equal(url.pathname, '/ig-user-1/likes');
+  assert.equal(call.options.method, 'POST');
+  assert.equal(call.options.headers['Content-Type'], 'application/json');
   assert.deepEqual(JSON.parse(call.options.body), { comment_id: 'comment-1' });
 
   call = fetchImpl.calls[2];
@@ -196,15 +206,66 @@ test('non-ok JSON responses throw InstagramApiError with status, body, code, and
   );
 });
 
+async function assertApiErrorFromListMedia(response, expectedStatus = 500) {
+  const fakeToken = 'fake-access-token-should-not-appear';
+  const fetchImpl = createRecordingFetch(response);
+  const client = createInstagramClient({ config, fetchImpl });
+
+  await assert.rejects(
+    () => client.listMedia(fakeToken),
+    (error) => {
+      assert.equal(error instanceof InstagramApiError, true);
+      assert.equal(error.status, expectedStatus);
+      assert.doesNotMatch(error.message, new RegExp(fakeToken));
+      return true;
+    }
+  );
+}
+
+test('non-JSON 500 responses throw InstagramApiError without leaking access token', async () => {
+  await assertApiErrorFromListMedia(textResponse(500, '<html>server failed</html>', 'text/html'));
+});
+
+test('malformed JSON 500 responses throw InstagramApiError without leaking access token', async () => {
+  await assertApiErrorFromListMedia(textResponse(500, '{"error":', 'application/json'));
+});
+
+test('empty 500 responses throw InstagramApiError without leaking access token', async () => {
+  await assertApiErrorFromListMedia(textResponse(500, '', 'application/json'));
+});
+
+test('malformed JSON 200 responses throw consistent InstagramApiError parse error type', async () => {
+  const fetchImpl = createRecordingFetch(textResponse(200, '{"data":', 'application/json'));
+  const client = createInstagramClient({ config, fetchImpl });
+
+  await assert.rejects(
+    () => client.listMedia('fake-access-token-should-not-appear'),
+    (error) => {
+      assert.equal(error instanceof InstagramApiError, true);
+      assert.equal(error.status, 200);
+      assert.match(error.message, /parse|json/i);
+      assert.doesNotMatch(error.message, /fake-access-token-should-not-appear/);
+      return true;
+    }
+  );
+});
+
 test('isDeliverabilityError is conservative', () => {
   assert.equal(isDeliverabilityError(new InstagramApiError('Cannot send message to this user', { status: 400 })), true);
-  assert.equal(isDeliverabilityError(new InstagramApiError('You are not allowed to message this recipient', { status: 400 })), true);
+  assert.equal(isDeliverabilityError(new InstagramApiError('Not allowed to message this user', { status: 400 })), true);
+  assert.equal(isDeliverabilityError(new InstagramApiError('User is unavailable', { status: 400 })), true);
   assert.equal(isDeliverabilityError(new InstagramApiError('Recipient is unavailable', { status: 400 })), true);
-  assert.equal(isDeliverabilityError(new InstagramApiError('User unavailable', { status: 400 })), true);
+  assert.equal(isDeliverabilityError(new InstagramApiError('This user blocked your account', { status: 400 })), true);
+  assert.equal(isDeliverabilityError(new InstagramApiError('User cannot receive messages', { status: 400 })), true);
 
+  assert.equal(isDeliverabilityError(new InstagramApiError('Invalid recipient id', { status: 400, code: 100 })), false);
+  assert.equal(isDeliverabilityError(new InstagramApiError('Recipient field is required', { status: 400, code: 100 })), false);
+  assert.equal(isDeliverabilityError(new InstagramApiError('Recipient validation failed', { status: 500 })), false);
+  assert.equal(isDeliverabilityError(new InstagramApiError('Cannot send message to this user', { status: 500 })), false);
   assert.equal(isDeliverabilityError(new InstagramApiError('Invalid OAuth access token', { status: 400, code: 190 })), false);
+  assert.equal(isDeliverabilityError(new InstagramApiError('Permission denied', { status: 403, code: 10 })), false);
   for (const code of [4, 17, 32, 613]) {
-    assert.equal(isDeliverabilityError(new InstagramApiError('Rate limit reached', { status: 429, code })), false);
+    assert.equal(isDeliverabilityError(new InstagramApiError('Rate limit or system error', { status: 429, code })), false);
   }
   assert.equal(isDeliverabilityError(new Error('Network failed')), false);
 });
