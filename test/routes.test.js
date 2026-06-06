@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import http from 'node:http';
 import { AUTH_COOKIE } from '../src/security/auth.js';
 import { decryptText, encryptText } from '../src/security/crypto.js';
 import { getAccount, upsertAccount } from '../src/repositories/accounts.js';
@@ -37,9 +38,40 @@ async function request(app, path, options = {}) {
   try {
     await new Promise((resolve) => server.once('listening', resolve));
     const { port } = server.address();
-    return await fetch(`http://127.0.0.1:${port}${path}`, {
-      redirect: 'manual',
-      ...options
+    return await new Promise((resolve, reject) => {
+      const req = http.request({
+        hostname: '127.0.0.1',
+        port,
+        path,
+        method: options.method ?? 'GET',
+        headers: {
+          Connection: 'close',
+          ...options.headers
+        }
+      }, (res) => {
+        res.setEncoding('utf8');
+        let body = '';
+        res.on('data', (chunk) => {
+          body += chunk;
+        });
+        res.on('end', () => {
+          resolve({
+            status: res.statusCode,
+            headers: {
+              get(name) {
+                const value = res.headers[String(name).toLowerCase()];
+                return Array.isArray(value) ? value[0] : value ?? null;
+              }
+            },
+            text: async () => body
+          });
+        });
+      });
+      req.on('error', reject);
+      if (options.body !== undefined) {
+        req.write(options.body);
+      }
+      req.end();
     });
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
