@@ -38,7 +38,7 @@ export function createReplyLog(db, log) {
       @requestPayloadJson,
       @responsePayloadJson,
       @errorMessage,
-      datetime('now')
+      strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     )
   `).run(log);
   return Number(result.lastInsertRowid);

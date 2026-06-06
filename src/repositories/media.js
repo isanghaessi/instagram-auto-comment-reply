@@ -17,7 +17,7 @@ export function upsertMedia(db, media) {
       @thumbnailUrl,
       @permalink,
       @timestamp,
-      datetime('now')
+      strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     )
     ON CONFLICT(instagram_media_id) DO UPDATE SET
       caption = excluded.caption,
@@ -26,7 +26,7 @@ export function upsertMedia(db, media) {
       thumbnail_url = excluded.thumbnail_url,
       permalink = excluded.permalink,
       timestamp = excluded.timestamp,
-      updated_at = datetime('now')
+      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
   `).run(media);
 
   return db.prepare('SELECT id FROM media WHERE instagram_media_id = ?')

@@ -29,7 +29,7 @@ export function createRule(db, rule) {
 }
 
 export function updateRule(db, id, rule) {
-  db.prepare(`
+  const result = db.prepare(`
     UPDATE automation_rules
     SET media_id = @mediaId,
         name = @name,
@@ -38,9 +38,10 @@ export function updateRule(db, id, rule) {
         reply_message = @replyMessage,
         dm_failure_reply_message = @dmFailureReplyMessage,
         is_active = @isActive,
-        updated_at = datetime('now')
+        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     WHERE id = @id AND deleted_at IS NULL
   `).run({ id, ...ruleParams(rule) });
+  return result.changes === 1;
 }
 
 export function listRules(db) {
@@ -73,19 +74,21 @@ export function getRule(db, id) {
 }
 
 export function setRuleActive(db, id, isActive) {
-  db.prepare(`
+  const result = db.prepare(`
     UPDATE automation_rules
-    SET is_active = ?, updated_at = datetime('now')
+    SET is_active = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     WHERE id = ? AND deleted_at IS NULL
   `).run(isActive ? 1 : 0, id);
+  return result.changes === 1;
 }
 
 export function softDeleteRule(db, id) {
-  db.prepare(`
+  const result = db.prepare(`
     UPDATE automation_rules
     SET is_active = 0,
-        deleted_at = datetime('now'),
-        updated_at = datetime('now')
+        deleted_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     WHERE id = ? AND deleted_at IS NULL
   `).run(id);
+  return result.changes === 1;
 }
