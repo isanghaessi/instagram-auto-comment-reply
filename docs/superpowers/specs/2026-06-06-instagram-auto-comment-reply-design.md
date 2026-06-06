@@ -23,8 +23,10 @@ MVP에서는 Instagram Webhook을 사용하지 않는다. 댓글 감지는 서�
 - 관리자가 게시물을 선택하고, 반응할 댓글 조건과 보낼 DM 메시지를 입력할 수 있게 한다.
 - 기본 60초마다 댓글을 확인한다.
 - 조건과 일치하는 댓글에 대해 Private Reply를 1회 발송한다.
-- 이미 처리한 댓글과 발송 시도를 저장해 중복 발송을 방지한다.
-- 성공, 실패, 어떤 룰에 의해 발송됐는지를 로그로 남긴다.
+- Private Reply 발송이 성공하면 해당 원댓글에 좋아요를 누른다.
+- Private Reply 발송이 실패하면, 실패 유형에 따라 룰별로 설정된 fallback 대댓글 문구를 원댓글에 공개 답글로 작성한다.
+- 이미 처리한 댓글과 발송 시도를 저장해 중복 DM, 중복 좋아요, 중복 fallback 대댓글을 방지한다.
+- 성공, 실패, 어떤 룰에 의해 발송됐는지와 후속 댓글 액션 결과를 로그로 남긴다.
 
 ## MVP에서 제외하는 것
 
@@ -53,6 +55,7 @@ OAuth에서 요청할 scope:
 - `instagram_business_basic`: 계정 및 게시물 기본 정보 조회.
 - `instagram_business_manage_comments`: 댓글 조회 및 관리.
 - `instagram_business_manage_messages`: Private Reply 발송.
+- `instagram_manage_engagement`: DM 발송 성공 후 댓글 좋아요 처리.
 
 앱은 Instagram username/password를 저장하지 않는다. OAuth 결과로 받은 access token만 암호화해서 저장한다.
 
@@ -137,7 +140,8 @@ Instagram 권한 승인이 성공하면 사용자는 `META_REDIRECT_URI`로 돌�
 - 선택된 Instagram media id.
 - 댓글 매칭 텍스트.
 - 매칭 방식.
-- 발송할 reply message.
+- 발송할 Private Reply 메시지.
+- DM 실패 시 작성할 fallback 대댓글 문구.
 - 활성 또는 일시중지 상태.
 
 MVP 매칭 방식:
@@ -146,7 +150,9 @@ MVP 매칭 방식:
 - 대소문자는 구분하지 않는다.
 - 각 키워드의 앞뒤 공백은 제거한다.
 
-reply message는 plain text만 지원한다. 링크는 일반 텍스트로 포함할 수 있다. 이미지, 버튼, quick reply 같은 rich message는 MVP 범위에 포함하지 않는다.
+Private Reply 메시지와 DM 실패 시 fallback 대댓글 문구는 모두 plain text만 지원한다. 링크는 일반 텍스트로 포함할 수 있다. 이미지, 버튼, quick reply 같은 rich message는 MVP 범위에 포함하지 않는다.
+
+DM 실패 fallback 문구는 룰마다 설정한다. 예: `DM을 보낼 수 없어 댓글로 안내드려요. 프로필 링크를 확인해주세요.`
 
 ### 룰 관리
 
@@ -166,6 +172,22 @@ soft delete 동작:
 - 기본 룰 목록에서는 숨긴다.
 - 과거 발송 로그에서 어떤 룰에 의해 발송됐는지 추적할 수 있도록 DB row는 보존한다.
 
+### 댓글 액션 정책
+
+조건과 일치한 댓글에 대한 액션 순서는 다음과 같다.
+
+1. 먼저 Instagram Private Reply를 발송한다.
+2. Private Reply가 성공하면 원댓글에 좋아요를 누른다.
+3. Private Reply가 실패하고, 실패 원인이 상대방의 DM 수신 불가/차단/대화 불가처럼 사용자별 deliverability 문제로 분류되면 룰에 설정된 fallback 대댓글 문구를 원댓글에 공개 답글로 작성한다.
+4. 토큰 만료, 권한 부족, rate limit, Meta API 장애, 네트워크 장애처럼 시스템성 실패로 분류되는 경우에는 공개 대댓글을 작성하지 않고 로그만 남긴다.
+
+중복 방지 원칙:
+
+- 같은 룰과 댓글 조합에 대해 Private Reply는 1회만 시도한다.
+- DM 성공 후 댓글 좋아요도 1회만 시도한다.
+- DM 실패 fallback 대댓글도 1회만 시도한다.
+- 서버 재시작 후에도 DB 로그를 기준으로 같은 댓글에 반복 액션을 수행하지 않는다.
+
 ### 로그
 
 발송 로그 UI는 다음 정보를 보여준다.
@@ -174,7 +196,9 @@ soft delete 동작:
 - 게시물 캡션 미리보기 또는 media id.
 - 댓글 내용.
 - 가능한 경우 댓글 작성자 username 또는 id.
-- 발송 상태.
+- Private Reply 발송 상태.
+- 댓글 좋아요 상태.
+- fallback 대댓글 작성 상태.
 - 실패 시 error message.
 - 시각.
 
@@ -221,6 +245,7 @@ soft delete 동작:
 - `match_mode`
 - `keyword_text`
 - `reply_message`
+- `dm_failure_reply_message`
 - `is_active`
 - `deleted_at`
 - `created_at`
@@ -243,7 +268,10 @@ soft delete 동작:
 - `id`
 - `rule_id`
 - `comment_event_id`
-- `status`
+- `dm_status`
+- `comment_like_status`
+- `fallback_reply_status`
+- `fallback_reply_comment_id`
 - `request_payload_json`
 - `response_payload_json`
 - `error_message`
@@ -257,7 +285,7 @@ soft delete 동작:
 - `rule_id`
 - `instagram_comment_id`
 
-서버가 재시작되더라도 기존 `reply_logs`와 `comment_events`를 기준으로 같은 댓글에 대한 반복 발송을 방지한다.
+서버가 재시작되더라도 기존 `reply_logs`와 `comment_events`를 기준으로 같은 댓글에 대한 반복 발송과 반복 후속 액션을 방지한다.
 
 ## Polling 흐름
 
@@ -271,7 +299,9 @@ soft delete 동작:
 6. 각 댓글을 해당 media의 활성 룰과 매칭한다.
 7. 같은 룰과 댓글 조합의 발송 로그가 이미 있으면 건너뛴다.
 8. 룰의 `reply_message`로 Instagram Private Reply를 발송한다.
-9. 성공 또는 실패 결과를 `reply_logs`에 저장한다.
+9. DM 발송 성공 시 해당 원댓글에 좋아요를 누른다.
+10. DM 발송 실패가 사용자별 deliverability 문제로 분류되면 룰의 `dm_failure_reply_message`로 원댓글에 fallback 대댓글을 작성한다.
+11. DM, 댓글 좋아요, fallback 대댓글 결과를 `reply_logs`에 저장한다.
 
 Polling loop는 중첩 실행을 피해야 한다. 이전 polling이 아직 실행 중이면 다음 tick은 건너뛰고 로그를 남긴다.
 
@@ -284,7 +314,9 @@ Polling loop는 중첩 실행을 피해야 한다. 이전 polling이 아직 실�
 - 만료된 token: 계정을 disconnected 상태로 표시하고 재연결 안내를 보여준다.
 - 권한 부족: media 조회, 댓글 조회, 메시지 발송 중 어떤 기능이 실패했는지 보여준다.
 - API rate limit: 에러를 로그에 남기고 다음 polling 주기에 다시 시도한다.
-- Private Reply 실패: 실패 내용을 `reply_logs`에 저장한다. 명시적인 retry 정책이 추가되기 전까지 자동 재시도는 하지 않는다.
+- Private Reply 실패: 실패 내용을 `reply_logs`에 저장한다. 사용자별 deliverability 실패로 분류되면 룰별 fallback 대댓글을 1회 작성한다. 시스템성 실패로 분류되면 공개 대댓글을 작성하지 않는다.
+- 댓글 좋아요 실패: DM 발송 자체는 성공으로 유지하고, 좋아요 실패만 별도 상태로 로그에 남긴다.
+- fallback 대댓글 실패: 실패 내용을 `reply_logs`에 저장하고 자동 재시도는 하지 않는다.
 - DB 에러: 서버 로그에 기록하고 UI에는 일반적인 에러 메시지를 보여준다.
 
 ## 보안
@@ -322,13 +354,17 @@ MVP 완료 판단 전에 다음을 확인한다.
 - OAuth callback에서 `state` 검증이 동작하는지 확인한다.
 - OAuth code를 access token으로 교환하고 long-lived token으로 저장하는지 확인한다.
 - 유효한 token으로 계정 metadata가 표시되는지 확인한다.
+- OAuth scope에 `instagram_manage_engagement`가 포함되어 댓글 좋아요 권한을 요청하는지 확인한다.
 - 게시물 목록을 가져오고 게시물을 선택할 수 있는지 확인한다.
 - 룰 생성, 수정, 일시중지, 재개, soft delete가 동작하는지 확인한다.
 - soft-deleted 룰은 실행되지 않지만 DB에는 남아 있는지 확인한다.
 - 통제된 테스트 게시물에서 polling loop를 실행한다.
 - 매칭되지 않는 댓글에는 reply가 발송되지 않는지 확인한다.
 - 매칭되는 댓글에는 Private Reply 발송 시도가 1회 기록되는지 확인한다.
-- 서버 재시작 후 같은 댓글에 다시 reply가 발송되지 않는지 확인한다.
+- Private Reply 성공 시 원댓글 좋아요가 1회 시도되고 로그에 기록되는지 확인한다.
+- Private Reply가 사용자별 deliverability 실패로 분류될 때 룰별 fallback 대댓글이 1회 작성되고 로그에 기록되는지 확인한다.
+- Private Reply가 시스템성 실패로 분류될 때 fallback 대댓글이 작성되지 않는지 확인한다.
+- 서버 재시작 후 같은 댓글에 다시 reply, 좋아요, fallback 대댓글이 수행되지 않는지 확인한다.
 
 ## 남은 리스크
 
@@ -336,3 +372,5 @@ MVP 완료 판단 전에 다음을 확인한다.
 - 내 계정 1개가 아닌 외부 사용자 계정 연결로 확장하면 App Review와 Business Verification이 필요할 수 있다.
 - Polling 방식은 실시간이 아니다. 기본 설정에서는 최대 약 60초와 API latency만큼 응답이 지연될 수 있다.
 - Private Reply 제약은 Instagram이 강제한다. 실패한 발송은 로그에서 확인 가능해야 한다.
+- Instagram API의 실패 응답만으로 사용자별 deliverability 실패와 시스템성 실패를 완벽히 구분하지 못할 수 있다. 분류가 불확실하면 공개 대댓글을 작성하지 않는 보수적 정책을 기본으로 한다.
+- 댓글 좋아요 API는 Meta Instagram Platform changelog 기준 `instagram_manage_engagement` 권한이 필요하므로, 해당 권한을 사용할 수 없는 경우 DM 성공 표시용 좋아요 기능은 비활성화해야 한다.
