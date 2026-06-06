@@ -6,6 +6,8 @@ import { decryptText, encryptText } from '../src/security/crypto.js';
 import { getAccount, upsertAccount } from '../src/repositories/accounts.js';
 import { upsertMedia } from '../src/repositories/media.js';
 import { createRule } from '../src/repositories/rules.js';
+import { upsertCommentEvent } from '../src/repositories/comments.js';
+import { createReplyLog } from '../src/repositories/replyLogs.js';
 import { createServer } from '../src/server.js';
 import { createTestDb } from './helpers/testDb.js';
 
@@ -445,6 +447,117 @@ test('GET /auth/instagram/callback renders generic failure without leaking excha
   }
 });
 
+
+
+test('authenticated GET /logs returns recent reply log page with escaped dynamic values', async () => {
+  const { db } = createTestDb();
+  const mediaId = upsertMedia(db, {
+    instagramMediaId: 'media-logs',
+    caption: 'log caption',
+    mediaType: 'IMAGE',
+    mediaUrl: null,
+    thumbnailUrl: null,
+    permalink: 'https://instagram.example/p/logs',
+    timestamp: '2026-06-06T12:00:00+0000'
+  });
+  const ruleId = createRule(db, {
+    mediaId,
+    name: 'Rule <script>alert(1)</script>',
+    matchMode: 'contains_any',
+    keywordText: 'coupon',
+    replyMessage: 'DM reply',
+    dmFailureReplyMessage: 'fallback',
+    isActive: true
+  });
+  const commentEventId = upsertCommentEvent(db, {
+    instagramCommentId: 'comment-log-1',
+    mediaId,
+    commenterId: 'user-1',
+    commenterUsername: 'user <img src=x onerror=alert(1)>',
+    commentText: '쿠폰 주세요 <b>bold</b>',
+    instagramCreatedAt: '2026-06-06T12:01:00.000Z'
+  });
+  createReplyLog(db, {
+    ruleId,
+    commentEventId,
+    instagramCommentId: 'comment-log-1',
+    dmStatus: 'failed',
+    commentLikeStatus: 'skipped',
+    fallbackReplyStatus: 'sent',
+    fallbackReplyCommentId: 'fallback-1',
+    requestPayloadJson: '{}',
+    responsePayloadJson: '{}',
+    errorMessage: 'provider failed <token-secret>'
+  });
+  const app = testApp({ db });
+
+  try {
+    const cookie = await authenticatedCookie(app);
+    const response = await request(app, '/logs', { headers: { Cookie: cookie } });
+    const html = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.match(html, /발송 로그/);
+    assert.match(html, /Created \/ Sent/);
+    assert.match(html, /Rule &lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+    assert.match(html, /user &lt;img src=x onerror=alert\(1\)&gt;/);
+    assert.match(html, /쿠폰 주세요 &lt;b&gt;bold&lt;\/b&gt;/);
+    assert.match(html, /failed/);
+    assert.match(html, /skipped/);
+    assert.match(html, /sent/);
+    assert.match(html, /provider failed &lt;token-secret&gt;/);
+    assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/);
+    assert.doesNotMatch(html, /<img src=x onerror=alert\(1\)>/);
+    assert.doesNotMatch(html, /<b>bold<\/b>/);
+    assert.doesNotMatch(html, /provider failed <token-secret>/);
+  } finally {
+    db.close();
+  }
+});
+
+test('GET /logs redirects unauthenticated users to /login', async () => {
+  const { db } = createTestDb();
+  const app = testApp({ db });
+
+  try {
+    const response = await request(app, '/logs');
+
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/login');
+  } finally {
+    db.close();
+  }
+});
+
+test('final 500 handler renders friendly page without stack or token leak', async () => {
+  const leakedToken = 'fake-token-should-not-render';
+  const internalMessage = `database exploded with ${leakedToken}`;
+  const app = testApp({
+    db: {
+      prepare() {
+        throw new Error(internalMessage);
+      }
+    }
+  });
+  const originalConsoleError = console.error;
+  console.error = () => {};
+
+  try {
+    const cookie = await authenticatedCookie(app);
+    const response = await request(app, '/logs', { headers: { Cookie: cookie } });
+    const html = await response.text();
+
+    assert.equal(response.status, 500);
+    assert.match(html, /일시적인 오류가 발생했습니다/);
+    assert.match(html, /잠시 후 다시 시도해 주세요/);
+    assert.doesNotMatch(html, new RegExp(leakedToken));
+    assert.doesNotMatch(html, new RegExp(internalMessage));
+    assert.doesNotMatch(html, /Error:/);
+    assert.doesNotMatch(html, /at .*\(/);
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
 
 test('authenticated GET /rules returns rule management page', async () => {
   const { db } = createTestDb();
