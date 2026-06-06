@@ -1,5 +1,10 @@
 import { Router } from 'express';
-import { AUTH_COOKIE, createAuthCookieValue } from '../security/auth.js';
+import {
+  AUTH_COOKIE,
+  SESSION_MAX_AGE_SECONDS,
+  createSession,
+  destroySession
+} from '../security/auth.js';
 import { layout } from '../views/html.js';
 
 function usesSecureCookie(config) {
@@ -10,7 +15,8 @@ function authCookieOptions(config) {
   return {
     httpOnly: true,
     sameSite: 'lax',
-    secure: usesSecureCookie(config)
+    secure: usesSecureCookie(config),
+    maxAge: SESSION_MAX_AGE_SECONDS * 1000
   };
 }
 
@@ -36,7 +42,7 @@ export function createAuthRoutes(config) {
 
   router.post('/login', (req, res) => {
     if (req.body?.password === config.adminPassword) {
-      res.cookie(AUTH_COOKIE, createAuthCookieValue(config.adminPassword), authCookieOptions(config));
+      res.cookie(AUTH_COOKIE, createSession(), authCookieOptions(config));
       res.redirect('/');
       return;
     }
@@ -45,7 +51,15 @@ export function createAuthRoutes(config) {
   });
 
   router.get('/logout', (req, res) => {
-    res.clearCookie(AUTH_COOKIE, authCookieOptions(config));
+    res.redirect('/');
+  });
+
+  router.post('/logout', (req, res) => {
+    destroySession(req.cookies?.[AUTH_COOKIE]);
+    res.cookie(AUTH_COOKIE, '', {
+      ...authCookieOptions(config),
+      maxAge: 0
+    });
     res.redirect('/login');
   });
 

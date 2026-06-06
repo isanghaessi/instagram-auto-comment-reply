@@ -26,6 +26,9 @@ export function layout(title, body) {
     nav { display: flex; gap: 1rem; flex-wrap: wrap; }
     nav a { color: white; text-decoration: none; font-weight: 600; }
     nav a:hover { text-decoration: underline; }
+    nav form { margin: 0; }
+    nav button { appearance: none; background: none; border: 0; color: white; cursor: pointer; font: inherit; font-weight: 600; padding: 0; }
+    nav button:hover { text-decoration: underline; }
     main { max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
     .card { background: white; border-radius: 0.75rem; box-shadow: 0 0.25rem 1rem rgb(23 32 51 / 10%); padding: 1.5rem; }
     .button { display: inline-block; background: #405de6; color: white; padding: 0.65rem 1rem; border-radius: 0.5rem; text-decoration: none; font-weight: 700; }
@@ -42,7 +45,7 @@ export function layout(title, body) {
       <a href="/">Dashboard</a>
       <a href="/rules">Rules</a>
       <a href="/logs">Logs</a>
-      <a href="/logout">Logout</a>
+      <form method="post" action="/logout"><button type="submit">Logout</button></form>
     </nav>
   </header>
   <main>
