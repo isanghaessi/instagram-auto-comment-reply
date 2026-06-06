@@ -1,0 +1,9 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+data/*.db
+data/*.db-*
+.superpowers/
+node_modules/
+npm-debug.log*
