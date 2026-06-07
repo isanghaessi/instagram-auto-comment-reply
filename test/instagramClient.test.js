@@ -147,8 +147,38 @@ test('read methods request graph fields and return data arrays with fallback', a
 
   const commentsUrl = new URL(fetchImpl.calls[3].url);
   assert.equal(commentsUrl.pathname, '/media-1/comments');
-  assert.equal(commentsUrl.searchParams.get('fields'), 'id,text,username,from,timestamp');
+  assert.equal(commentsUrl.searchParams.get('fields'), 'id,text,username,from,timestamp,user_likes');
   assert.equal(commentsUrl.searchParams.get('limit'), '50');
+});
+
+test('listComments retries without connected-account like field when unsupported', async () => {
+  const responses = [
+    errorJson(400, {
+      error: {
+        message: 'Tried accessing nonexisting field (user_likes) on node type (IGComment)',
+        code: 100
+      }
+    }),
+    okJson({ data: [{ id: 'comment-1', text: 'hello' }] })
+  ];
+  const fetchImpl = async (url, options = {}) => {
+    fetchImpl.calls.push({ url: String(url), options });
+    return responses.shift();
+  };
+  fetchImpl.calls = [];
+  const client = createInstagramClient({ config, fetchImpl });
+
+  assert.deepEqual(await client.listComments('token', 'media-1'), [{ id: 'comment-1', text: 'hello' }]);
+
+  assert.equal(fetchImpl.calls.length, 2);
+  assert.equal(
+    new URL(fetchImpl.calls[0].url).searchParams.get('fields'),
+    'id,text,username,from,timestamp,user_likes'
+  );
+  assert.equal(
+    new URL(fetchImpl.calls[1].url).searchParams.get('fields'),
+    'id,text,username,from,timestamp'
+  );
 });
 
 test('read methods follow bounded pagination for media and comments', async () => {

@@ -14,6 +14,7 @@ const INSTAGRAM_SCOPES = [
 const ACCOUNT_FIELDS = ['id', 'username', 'account_type'];
 const MEDIA_FIELDS = ['id', 'caption', 'media_type', 'media_url', 'thumbnail_url', 'permalink', 'timestamp'];
 const COMMENT_FIELDS = ['id', 'text', 'username', 'from', 'timestamp'];
+const COMMENT_FIELDS_WITH_VIEWER_LIKE = [...COMMENT_FIELDS, 'user_likes'];
 const RAW_BODY_LIMIT = 1024;
 const READ_PAGE_LIMIT = 50;
 const MAX_READ_PAGES = 10;
@@ -164,6 +165,18 @@ async function requestPagedData(fetchImpl, firstUrl) {
   return items;
 }
 
+function isUnsupportedFieldError(error) {
+  if (!(error instanceof InstagramApiError)) {
+    return false;
+  }
+  if (error.status !== 400 || error.code !== 100) {
+    return false;
+  }
+
+  const message = String(error.message || '');
+  return /user_likes/i.test(message) || /(nonexisting|unsupported|unknown)\s+field/i.test(message);
+}
+
 export function createInstagramClient({ config, fetchImpl = fetch }) {
   return {
     buildAuthorizeUrl(state) {
@@ -230,11 +243,24 @@ export function createInstagramClient({ config, fetchImpl = fetch }) {
     },
 
     async listComments(accessToken, instagramMediaId) {
-      return requestPagedData(fetchImpl, buildUrl(GRAPH_BASE_URL, `/${pathSegment(instagramMediaId)}/comments`, {
-        fields: COMMENT_FIELDS.join(','),
+      const commentsUrlWithViewerLike = buildUrl(GRAPH_BASE_URL, `/${pathSegment(instagramMediaId)}/comments`, {
+        fields: COMMENT_FIELDS_WITH_VIEWER_LIKE.join(','),
         limit: READ_PAGE_LIMIT,
         access_token: accessToken
-      }));
+      });
+
+      try {
+        return await requestPagedData(fetchImpl, commentsUrlWithViewerLike);
+      } catch (error) {
+        if (!isUnsupportedFieldError(error)) {
+          throw error;
+        }
+        return requestPagedData(fetchImpl, buildUrl(GRAPH_BASE_URL, `/${pathSegment(instagramMediaId)}/comments`, {
+          fields: COMMENT_FIELDS.join(','),
+          limit: READ_PAGE_LIMIT,
+          access_token: accessToken
+        }));
+      }
     },
 
     sendPrivateReply(accessToken, igUserId, commentId, message) {

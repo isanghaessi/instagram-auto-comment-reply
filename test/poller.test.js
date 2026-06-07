@@ -110,6 +110,76 @@ test('runPollingOnce sends DM, likes original comment, and skips fallback on DM 
   }
 });
 
+test('runPollingOnce skips DM when the connected account already liked the comment', async () => {
+  const { db } = createTestDb();
+  try {
+    insertAccount(db);
+    const { ruleId } = insertMediaAndRule(db);
+    const instagramClient = createInstagramClient({
+      async listComments(token, mediaId) {
+        this.calls.push(['listComments', token, mediaId]);
+        return [{
+          id: 'comment-1',
+          text: '쿠폰 주세요',
+          username: 'commenter',
+          from: { id: 'commenter-id' },
+          timestamp: '2026-06-06T00:01:00.000Z',
+          liked_by_connected_account: true
+        }];
+      }
+    });
+
+    const result = await runPollingOnce({ db, instagramClient, encryptionKey });
+
+    assert.deepEqual(result, { processed: 1 });
+    assert.deepEqual(callNames(instagramClient), ['listComments']);
+
+    const log = findReplyLog(db, ruleId, 'comment-1');
+    assert.equal(log.dm_status, 'skipped');
+    assert.equal(log.comment_like_status, 'skipped');
+    assert.equal(log.fallback_reply_status, 'skipped');
+    assert.match(log.request_payload_json, /comment_already_liked_by_connected_account/);
+    assert.match(log.response_payload_json, /liked_by_connected_account/);
+    assert.equal(log.error_message, null);
+    assert.equal(log.sent_at !== null, true);
+  } finally {
+    db.close();
+  }
+});
+
+test('runPollingOnce does not skip DM from total like_count alone', async () => {
+  const { db } = createTestDb();
+  try {
+    insertAccount(db);
+    const { ruleId } = insertMediaAndRule(db);
+    const instagramClient = createInstagramClient({
+      async listComments(token, mediaId) {
+        this.calls.push(['listComments', token, mediaId]);
+        return [{
+          id: 'comment-1',
+          text: '쿠폰 주세요',
+          username: 'commenter',
+          from: { id: 'commenter-id' },
+          timestamp: '2026-06-06T00:01:00.000Z',
+          like_count: 3
+        }];
+      }
+    });
+
+    const result = await runPollingOnce({ db, instagramClient, encryptionKey });
+
+    assert.deepEqual(result, { processed: 1 });
+    assert.deepEqual(callNames(instagramClient), ['listComments', 'sendPrivateReply', 'likeComment']);
+
+    const log = findReplyLog(db, ruleId, 'comment-1');
+    assert.equal(log.dm_status, 'sent');
+    assert.equal(log.comment_like_status, 'sent');
+    assert.equal(log.fallback_reply_status, 'skipped');
+  } finally {
+    db.close();
+  }
+});
+
 
 test('runPollingOnce keeps DM sent when like fails and does not fallback', async () => {
   const { db } = createTestDb();

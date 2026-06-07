@@ -26,8 +26,20 @@ function normalizeComment(comment) {
     text: String(comment?.text ?? ''),
     username: comment?.username ? String(comment.username) : null,
     fromId: comment?.from?.id ? String(comment.from.id) : null,
-    timestamp: comment?.timestamp ? String(comment.timestamp) : null
+    timestamp: comment?.timestamp ? String(comment.timestamp) : null,
+    likedByConnectedAccount: connectedAccountLikedComment(comment)
   };
+}
+
+function connectedAccountLikedComment(comment) {
+  const explicitLikeFields = [
+    comment?.liked_by_connected_account,
+    comment?.liked_by_me,
+    comment?.has_liked,
+    comment?.user_likes,
+    comment?.viewer_has_liked
+  ];
+  return explicitLikeFields.some((value) => value === true);
 }
 
 function errorMessage(error, token) {
@@ -209,6 +221,33 @@ async function processClaimedComment({ db, instagramClient, token, account, rule
   }
 }
 
+function skipClaimedCommentAlreadyLiked({ db, token, rule, comment, commentEventId }) {
+  const updated = updateReplyLog(db, {
+    ruleId: rule.id,
+    commentEventId,
+    instagramCommentId: comment.id,
+    dmStatus: 'skipped',
+    commentLikeStatus: 'skipped',
+    fallbackReplyStatus: 'skipped',
+    fallbackReplyCommentId: null,
+    requestPayloadJson: jsonPayload({
+      skip: {
+        reason: 'comment_already_liked_by_connected_account',
+        comment_id: comment.id
+      }
+    }, token),
+    responsePayloadJson: jsonPayload({
+      comment: {
+        liked_by_connected_account: true
+      }
+    }, token),
+    errorMessage: null
+  });
+  if (!updated) {
+    throw new Error('Claimed reply log was not updated');
+  }
+}
+
 export async function runPollingOnce({ db, instagramClient, encryptionKey, now = new Date() }) {
   const account = getAccount(db);
   if (!account) {
@@ -275,6 +314,11 @@ export async function runPollingOnce({ db, instagramClient, encryptionKey, now =
         }
 
         try {
+          if (comment.likedByConnectedAccount) {
+            skipClaimedCommentAlreadyLiked({ db, token, rule, comment, commentEventId });
+            processed += 1;
+            continue;
+          }
           await processClaimedComment({ db, instagramClient, token, account, rule, comment, commentEventId });
           processed += 1;
         } catch (error) {
