@@ -184,6 +184,8 @@ export function createInstagramClient({ config, fetchImpl = fetch }) {
         client_id: config.metaAppId,
         redirect_uri: config.metaRedirectUri,
         response_type: 'code',
+        enable_fb_login: 0,
+        force_authentication: 1,
         scope: INSTAGRAM_SCOPES.join(','),
         state
       }).toString();

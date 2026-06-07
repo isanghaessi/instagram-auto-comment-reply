@@ -54,6 +54,8 @@ test('buildAuthorizeUrl includes required scopes and state', () => {
   assert.equal(url.searchParams.get('redirect_uri'), config.metaRedirectUri);
   assert.equal(url.searchParams.get('response_type'), 'code');
   assert.equal(url.searchParams.get('state'), 'state-123');
+  assert.equal(url.searchParams.get('enable_fb_login'), '0');
+  assert.equal(url.searchParams.get('force_authentication'), '1');
   const scopes = url.searchParams.get('scope').split(',');
   assert.deepEqual(new Set(scopes), new Set([
     'instagram_business_basic',
