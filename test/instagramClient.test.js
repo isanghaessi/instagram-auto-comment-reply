@@ -60,8 +60,7 @@ test('buildAuthorizeUrl includes required scopes and state', () => {
   assert.deepEqual(new Set(scopes), new Set([
     'instagram_business_basic',
     'instagram_business_manage_comments',
-    'instagram_business_manage_messages',
-    'instagram_manage_engagement'
+    'instagram_business_manage_messages'
   ]));
 });
 

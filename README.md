@@ -78,7 +78,6 @@ https://your-domain.example.com
    - `instagram_business_basic`
    - `instagram_business_manage_comments`
    - `instagram_business_manage_messages`
-   - `instagram_manage_engagement`
 5. 본인이 소유하거나 관리 권한을 가진 Instagram Professional(Creator/Business) 계정을 앱 설정/역할 사용자로 접근 가능하게 둡니다.
 6. 앱 리뷰와 Business Verification 전에는 앱 role user/tester 범위에서 사용하세요.
 
@@ -105,7 +104,7 @@ https://your-domain.example.com
 - `ENCRYPTION_KEY`를 분실하면 저장된 Instagram access token을 복호화할 수 없습니다.
 - `ENCRYPTION_KEY`가 유출되면 `.env`와 DB를 함께 가진 공격자가 token을 복호화할 수 있으므로 안전하게 보관하세요.
 - 저장된 long-lived token은 만료 7일 이내 polling 전에 자동 refresh를 시도합니다. refresh가 계속 실패하면 Instagram 계정을 UI에서 다시 연결하세요.
-- 댓글 좋아요는 Meta Instagram Platform changelog의 Like Media and Comments API 기준 `POST /<IG_USER_ID>/likes` + `comment_id`를 사용합니다. `instagram_manage_engagement` 권한이 없거나 앱/계정/콘텐츠 제약에 걸리면 실패할 수 있으므로, 운영 전 해당 기능을 비활성화하거나 권한을 확보하고 `Logs`에서 실패 여부를 확인하세요.
+- 댓글 좋아요는 OAuth 성공을 막지 않도록 별도 engagement scope를 요청하지 않는 보조 기능입니다. 앱/계정/콘텐츠 제약에 걸려 실패할 수 있으며, 실패해도 DM 성공은 유지되고 `Logs`에 좋아요 실패만 별도 기록됩니다.
 - 이 MVP는 Instagram Webhook을 사용하지 않고 polling만 사용합니다.
 - 여러 서버 인스턴스를 동시에 띄우는 구성은 권장하지 않습니다. 단일 프로세스/단일 SQLite 파일 기준 MVP입니다.
 - 중복 DM 방지를 위해 `(rule, comment)` 선점 로그를 먼저 생성합니다. 프로세스가 중간에 죽어도 같은 댓글에 DM을 재발송하지 않는 쪽을 우선합니다.

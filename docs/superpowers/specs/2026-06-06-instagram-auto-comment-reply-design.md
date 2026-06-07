@@ -56,7 +56,8 @@ OAuth에서 요청할 scope:
 - `instagram_business_basic`: 계정 및 게시물 기본 정보 조회.
 - `instagram_business_manage_comments`: 댓글 조회 및 관리.
 - `instagram_business_manage_messages`: Private Reply 발송.
-- `instagram_manage_engagement`: DM 발송 성공 후 댓글 좋아요 처리.
+
+댓글 좋아요는 OAuth 성공을 막지 않도록 별도 engagement scope를 요청하지 않는 보조 기능으로 둔다. 좋아요 API가 권한/계정/콘텐츠 제약으로 실패하면 DM 성공은 유지하고 좋아요 실패만 로그에 남긴다.
 
 앱은 Instagram username/password를 저장하지 않는다. OAuth 결과로 받은 access token만 암호화해서 저장한다.
 
@@ -360,7 +361,7 @@ MVP 완료 판단 전에 다음을 확인한다.
 - OAuth callback에서 `state` 검증이 동작하는지 확인한다.
 - OAuth code를 access token으로 교환하고 long-lived token으로 저장하는지 확인한다.
 - 유효한 token으로 계정 metadata가 표시되는지 확인한다.
-- OAuth scope에 `instagram_manage_engagement`가 포함되어 댓글 좋아요 권한을 요청하는지 확인한다.
+- OAuth scope가 Instagram Login용 `instagram_business_*` scope만 포함하는지 확인한다.
 - 게시물 목록을 가져오고 게시물을 선택할 수 있는지 확인한다.
 - 룰 생성, 수정, 일시중지, 재개, soft delete가 동작하는지 확인한다.
 - soft-deleted 룰은 실행되지 않지만 DB에는 남아 있는지 확인한다.
@@ -381,4 +382,4 @@ MVP 완료 판단 전에 다음을 확인한다.
 - Private Reply 제약은 Instagram이 강제한다. 실패한 발송은 로그에서 확인 가능해야 한다.
 - Instagram API의 실패 응답만으로 사용자별 deliverability 실패와 시스템성 실패를 완벽히 구분하지 못할 수 있다. 분류가 불확실하면 공개 대댓글을 작성하지 않는 보수적 정책을 기본으로 한다.
 - 댓글 좋아요 여부 판정은 연결된 Instagram 계정이 해당 댓글을 좋아요 했다는 명시적 필드 또는 API 응답이 있을 때만 사용한다. API가 총 좋아요 수만 제공하거나 내 계정의 좋아요 여부를 확인할 수 없으면 이 조건으로 DM을 skip하지 않는다.
-- 댓글 좋아요 API는 Meta Instagram Platform changelog 기준 `instagram_manage_engagement` 권한이 필요하므로, 해당 권한을 사용할 수 없는 경우 DM 성공 표시용 좋아요 기능은 비활성화해야 한다.
+- 댓글 좋아요 API는 앱/계정/콘텐츠 제약으로 실패할 수 있으므로, 실패해도 DM 성공은 유지하고 좋아요 실패만 로그에 남긴다.

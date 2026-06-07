@@ -7,8 +7,7 @@ const GRAPH_BASE_URL = 'https://graph.instagram.com';
 const INSTAGRAM_SCOPES = [
   'instagram_business_basic',
   'instagram_business_manage_comments',
-  'instagram_business_manage_messages',
-  'instagram_manage_engagement'
+  'instagram_business_manage_messages'
 ];
 
 const ACCOUNT_FIELDS = ['id', 'username', 'account_type'];
