@@ -8,6 +8,14 @@ function required(env, key) {
   return String(value).trim();
 }
 
+function optional(env, key) {
+  const value = env[key];
+  if (!value || String(value).trim() === '') {
+    return null;
+  }
+  return String(value).trim();
+}
+
 function parseInteger(value, fallback, name) {
   if (value === undefined || value === '') return fallback;
   const text = String(value).trim();
@@ -40,9 +48,9 @@ export function loadConfig(env = process.env) {
     port: parseInteger(env.PORT, 3000, 'PORT'),
     databasePath,
     publicBaseUrl: required(env, 'PUBLIC_BASE_URL').replace(/\/$/, ''),
-    metaAppId: required(env, 'META_APP_ID'),
-    metaAppSecret: required(env, 'META_APP_SECRET'),
-    metaRedirectUri: required(env, 'META_REDIRECT_URI'),
+    metaAppId: optional(env, 'META_APP_ID'),
+    metaAppSecret: optional(env, 'META_APP_SECRET'),
+    metaRedirectUri: optional(env, 'META_REDIRECT_URI'),
     encryptionKey: parseEncryptionKey(encryptionKeyRaw),
     adminPassword: required(env, 'ADMIN_PASSWORD'),
     pollingIntervalSeconds: parseInteger(env.POLLING_INTERVAL_SECONDS, 60, 'POLLING_INTERVAL_SECONDS')

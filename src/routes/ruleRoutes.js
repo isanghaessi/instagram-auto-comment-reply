@@ -72,7 +72,7 @@ function mediaOptions(mediaItems, selectedMediaId) {
 
 function ruleForm({ mediaItems, rule = null, action = '/rules', submitLabel = 'Create rule' }) {
   if (mediaItems.length === 0) {
-    return `      <p>No media has been synced yet. Connect Instagram and sync media before creating an auto-reply rule.</p>
+    return `      <p>No media has been synced yet. Connect an Instagram access token and sync media before creating an auto-reply rule.</p>
       <p><a class="button" href="/">Go to dashboard</a></p>`;
   }
 

@@ -6,9 +6,6 @@ test('loadConfig returns parsed values with defaults', () => {
   const config = loadConfig({
     DATABASE_PATH: './tmp/app.db',
     PUBLIC_BASE_URL: 'https://example.com',
-    META_APP_ID: 'app-id',
-    META_APP_SECRET: 'secret',
-    META_REDIRECT_URI: 'https://example.com/auth/instagram/callback',
     ENCRYPTION_KEY: Buffer.alloc(32, 1).toString('base64'),
     ADMIN_PASSWORD: 'pass1234'
   });
@@ -16,6 +13,9 @@ test('loadConfig returns parsed values with defaults', () => {
   assert.equal(config.port, 3000);
   assert.equal(config.databasePath, './tmp/app.db');
   assert.equal(config.publicBaseUrl, 'https://example.com');
+  assert.equal(config.metaAppId, null);
+  assert.equal(config.metaAppSecret, null);
+  assert.equal(config.metaRedirectUri, null);
   assert.equal(config.pollingIntervalSeconds, 60);
 });
 
@@ -27,9 +27,6 @@ test('loadConfig rejects invalid encryption key', () => {
   assert.throws(() => loadConfig({
     DATABASE_PATH: './tmp/app.db',
     PUBLIC_BASE_URL: 'https://example.com',
-    META_APP_ID: 'app-id',
-    META_APP_SECRET: 'secret',
-    META_REDIRECT_URI: 'https://example.com/auth/instagram/callback',
     ENCRYPTION_KEY: 'short',
     ADMIN_PASSWORD: 'pass1234'
   }), /ENCRYPTION_KEY/);
@@ -40,9 +37,6 @@ test('loadConfig rejects PORT with trailing characters', () => {
   assert.throws(() => loadConfig({
     DATABASE_PATH: './tmp/app.db',
     PUBLIC_BASE_URL: 'https://example.com',
-    META_APP_ID: 'app-id',
-    META_APP_SECRET: 'secret',
-    META_REDIRECT_URI: 'https://example.com/auth/instagram/callback',
     ENCRYPTION_KEY: Buffer.alloc(32, 1).toString('base64'),
     ADMIN_PASSWORD: 'pass1234',
     PORT: '3000abc'
@@ -53,9 +47,6 @@ test('loadConfig rejects fractional polling interval', () => {
   assert.throws(() => loadConfig({
     DATABASE_PATH: './tmp/app.db',
     PUBLIC_BASE_URL: 'https://example.com',
-    META_APP_ID: 'app-id',
-    META_APP_SECRET: 'secret',
-    META_REDIRECT_URI: 'https://example.com/auth/instagram/callback',
     ENCRYPTION_KEY: Buffer.alloc(32, 1).toString('base64'),
     ADMIN_PASSWORD: 'pass1234',
     POLLING_INTERVAL_SECONDS: '1.5'
@@ -67,9 +58,6 @@ test('loadConfig rejects encryption key with trailing invalid character', () => 
   assert.throws(() => loadConfig({
     DATABASE_PATH: './tmp/app.db',
     PUBLIC_BASE_URL: 'https://example.com',
-    META_APP_ID: 'app-id',
-    META_APP_SECRET: 'secret',
-    META_REDIRECT_URI: 'https://example.com/auth/instagram/callback',
     ENCRYPTION_KEY: `${validKey}!`,
     ADMIN_PASSWORD: 'pass1234'
   }), /ENCRYPTION_KEY/);

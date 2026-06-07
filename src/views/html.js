@@ -34,7 +34,8 @@ export function layout(title, body) {
     .button { display: inline-block; background: #405de6; color: white; padding: 0.65rem 1rem; border-radius: 0.5rem; text-decoration: none; font-weight: 700; }
     .error { color: #b00020; font-weight: 700; }
     label { display: block; margin-bottom: 0.75rem; font-weight: 700; }
-    input[type="password"] { display: block; width: min(100%, 24rem); margin-top: 0.35rem; padding: 0.55rem; font: inherit; }
+    input[type="password"], textarea { display: block; width: min(100%, 36rem); margin-top: 0.35rem; padding: 0.55rem; font: inherit; }
+    textarea { min-height: 7rem; }
     button { padding: 0.6rem 1rem; font: inherit; font-weight: 700; cursor: pointer; }
   </style>
 </head>

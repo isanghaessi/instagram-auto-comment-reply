@@ -10,7 +10,7 @@ const INSTAGRAM_SCOPES = [
   'instagram_business_manage_messages'
 ];
 
-const ACCOUNT_FIELDS = ['id', 'username', 'account_type'];
+const ACCOUNT_FIELDS = ['user_id', 'username', 'account_type'];
 const MEDIA_FIELDS = ['id', 'caption', 'media_type', 'media_url', 'thumbnail_url', 'permalink', 'timestamp'];
 const COMMENT_FIELDS = ['id', 'text', 'username', 'from', 'timestamp'];
 const COMMENT_FIELDS_WITH_VIEWER_LIKE = [...COMMENT_FIELDS, 'user_likes'];

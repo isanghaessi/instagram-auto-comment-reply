@@ -115,7 +115,7 @@ test('token exchange and refresh methods call graph API with URLSearchParams', a
 
 test('read methods request graph fields and return data arrays with fallback', async () => {
   const responses = [
-    okJson({ id: 'ig-user-1', username: 'creator', account_type: 'BUSINESS' }),
+    okJson({ user_id: 'ig-user-1', username: 'creator', account_type: 'BUSINESS' }),
     okJson({ data: [{ id: 'media-1' }] }),
     okJson({}),
     okJson({ data: [{ id: 'comment-1' }] })
@@ -128,7 +128,7 @@ test('read methods request graph fields and return data arrays with fallback', a
   const client = createInstagramClient({ config, fetchImpl });
 
   assert.deepEqual(await client.getAccount('token'), {
-    id: 'ig-user-1',
+    user_id: 'ig-user-1',
     username: 'creator',
     account_type: 'BUSINESS'
   });
@@ -139,7 +139,7 @@ test('read methods request graph fields and return data arrays with fallback', a
   const accountUrl = new URL(fetchImpl.calls[0].url);
   assert.equal(accountUrl.pathname, '/me');
   assert.equal(accountUrl.searchParams.get('access_token'), 'token');
-  assert.equal(accountUrl.searchParams.get('fields'), 'id,username,account_type');
+  assert.equal(accountUrl.searchParams.get('fields'), 'user_id,username,account_type');
 
   const mediaUrl = new URL(fetchImpl.calls[1].url);
   assert.equal(mediaUrl.pathname, '/me/media');

@@ -5,9 +5,9 @@
 
 ## 요약
 
-도메인과 공개 HTTPS 서버가 있다는 전제로, Instagram Creator 또는 Business 계정 1개를 OAuth 방식으로 연결하는 self-hosted Node.js 웹 서버를 만든다. 서버는 SQLite 파일 DB에 데이터를 저장하고, 기본 60초마다 Instagram 댓글을 polling한다. 선택된 게시물에 조건과 일치하는 댓글이 달리면 설정된 메시지를 Instagram Private Reply 방식으로 자동 발송한다.
+도메인과 공개 HTTPS 서버가 있다는 전제로, Instagram Creator 또는 Business 계정 1개의 long-lived access token을 수동 입력해 연결하는 self-hosted Node.js 웹 서버를 만든다. 서버는 SQLite 파일 DB에 데이터를 저장하고, 기본 60초마다 Instagram 댓글을 polling한다. 선택된 게시물에 조건과 일치하는 댓글이 달리면 설정된 메시지를 Instagram Private Reply 방식으로 자동 발송한다.
 
-MVP에서는 Instagram Webhook을 사용하지 않는다. 댓글 감지는 서버가 주기적으로 Instagram API를 호출하는 polling 방식으로 처리한다. 따라서 공개 도메인은 OAuth callback을 위해 필요하지만, 댓글 이벤트 수신용 Webhook endpoint는 필요하지 않다.
+MVP에서는 Instagram Webhook을 사용하지 않는다. 댓글 감지는 서버가 주기적으로 Instagram API를 호출하는 polling 방식으로 처리한다. 따라서 댓글 이벤트 수신용 Webhook endpoint는 필요하지 않다. 토큰 수동 입력 방식이므로 OAuth callback endpoint도 필요하지 않다.
 
 ## 목표
 
@@ -15,8 +15,8 @@ MVP에서는 Instagram Webhook을 사용하지 않는다. 댓글 감지는 서�
 - `npm start`만으로 Node.js 서버를 실행한다.
 - 외부 DB 서버 없이 SQLite 파일 DB를 사용한다.
 - Instagram Creator 또는 Business 계정 1개만 지원한다.
-- 계정 연결은 Instagram OAuth 방식으로 처리한다.
-- OAuth 성공 후 access token을 long-lived token으로 교환해 암호화 저장한다.
+- 계정 연결은 Meta App Dashboard에서 발급한 Instagram long-lived access token을 관리자가 웹 UI에 붙여넣는 방식으로 처리한다.
+- 입력된 access token은 `/me` 호출로 검증한 뒤 암호화 저장한다.
 - 설정과 운영을 위한 친화적인 웹 UI를 제공한다.
 - 연결된 Instagram 계정의 게시물 목록을 보여준다.
 - 관리자가 자동응답 룰을 생성, 수정, 일시중지, 재개, soft delete 할 수 있게 한다.
@@ -51,15 +51,15 @@ MVP에서는 Instagram Webhook을 사용하지 않는다. 댓글 감지는 서�
 
 ## 필요한 Instagram 권한
 
-OAuth에서 요청할 scope:
+Meta App Dashboard에서 발급할 token에는 다음 Instagram API 권한이 필요하다:
 
 - `instagram_business_basic`: 계정 및 게시물 기본 정보 조회.
 - `instagram_business_manage_comments`: 댓글 조회 및 관리.
 - `instagram_business_manage_messages`: Private Reply 발송.
 
-댓글 좋아요는 OAuth 성공을 막지 않도록 별도 engagement scope를 요청하지 않는 보조 기능으로 둔다. 좋아요 API가 권한/계정/콘텐츠 제약으로 실패하면 DM 성공은 유지하고 좋아요 실패만 로그에 남긴다.
+댓글 좋아요는 token 연결 성공을 막지 않도록 별도 engagement scope를 요구하지 않는 보조 기능으로 둔다. 좋아요 API가 권한/계정/콘텐츠 제약으로 실패하면 DM 성공은 유지하고 좋아요 실패만 로그에 남긴다.
 
-앱은 Instagram username/password를 저장하지 않는다. OAuth 결과로 받은 access token만 암호화해서 저장한다.
+앱은 Instagram username/password를 저장하지 않는다. 관리자가 붙여넣은 access token만 검증 후 암호화해서 저장한다.
 
 ## 실행 설정
 
@@ -69,9 +69,6 @@ OAuth에서 요청할 scope:
 PORT=3000
 DATABASE_PATH=./data/app.db
 PUBLIC_BASE_URL=https://your-domain.example.com
-META_APP_ID=<Meta App ID>
-META_APP_SECRET=<Meta App Secret>
-META_REDIRECT_URI=https://your-domain.example.com/auth/instagram/callback
 ENCRYPTION_KEY=<32-byte encryption key>
 ADMIN_PASSWORD=<admin password>
 POLLING_INTERVAL_SECONDS=60
@@ -81,10 +78,7 @@ POLLING_INTERVAL_SECONDS=60
 
 - `PORT`: Node.js 서버 포트. 기본값은 `3000`.
 - `DATABASE_PATH`: SQLite DB 파일 경로. 서버 시작 시 상위 폴더와 스키마를 자동 생성한다.
-- `PUBLIC_BASE_URL`: 외부에서 접근 가능한 HTTPS 도메인. OAuth redirect와 UI 링크 생성에 사용한다.
-- `META_APP_ID`: Meta Developer App의 App ID.
-- `META_APP_SECRET`: Meta Developer App의 App Secret. token 교환과 갱신에 사용한다.
-- `META_REDIRECT_URI`: Meta App Dashboard에 등록한 OAuth redirect URI와 정확히 일치해야 한다.
+- `PUBLIC_BASE_URL`: 외부에서 접근 가능한 origin. 운영에서는 HTTPS를 권장하며 관리자 POST 요청의 Origin/Referer 검증에 사용한다.
 - `ENCRYPTION_KEY`: Instagram access token을 SQLite에 저장하기 전에 암호화할 때 사용하는 키.
 - `ADMIN_PASSWORD`: 공개 도메인에 노출되는 관리자 UI 보호용 비밀번호.
 - `POLLING_INTERVAL_SECONDS`: 댓글 polling 주기. 기본값은 `60`.
@@ -97,17 +91,9 @@ POLLING_INTERVAL_SECONDS=60
 
 ### Instagram 계정 연결
 
-관리자는 웹 UI에서 **Instagram 계정 연결** 버튼을 누른다. 서버는 Instagram OAuth authorize URL로 사용자를 redirect한다.
+관리자는 Meta App Dashboard의 `Instagram > API setup with Instagram business login` 화면에서 연결할 Instagram Professional 계정의 long-lived access token을 발급받는다.
 
-OAuth 요청은 다음 정보를 포함한다.
-
-- `client_id`: `META_APP_ID`.
-- `redirect_uri`: `META_REDIRECT_URI`.
-- `response_type`: `code`.
-- `scope`: 필요한 Instagram business 권한 목록.
-- `state`: CSRF 방지를 위한 임의 값.
-
-Instagram 권한 승인이 성공하면 사용자는 `META_REDIRECT_URI`로 돌아오고, 서버는 callback의 `code`를 short-lived access token으로 교환한다. 이후 long-lived token으로 교환해 SQLite에 암호화 저장한다.
+웹 UI의 Dashboard는 계정이 연결되지 않았을 때 `Access Token` 입력 폼을 보여준다. 관리자가 token을 제출하면 서버는 token으로 `/me`를 호출해 Instagram user id, username, account type을 확인한다. 검증이 성공하면 access token을 SQLite에 암호화 저장한다. 검증이 실패하면 token을 저장하지 않고 일반적인 실패 메시지만 보여준다.
 
 연결 성공 후 UI에는 다음 정보를 보여준다.
 
@@ -222,13 +208,6 @@ soft delete 동작:
 - `created_at`
 - `updated_at`
 
-### `oauth_states`
-
-- `id`
-- `state`
-- `created_at`
-- `consumed_at`
-
 ### `media`
 
 - `id`
@@ -313,10 +292,7 @@ Polling loop는 중첩 실행을 피해야 한다. 이전 polling이 아직 실�
 
 ## 에러 처리
 
-- OAuth 설정 오류: App ID, App Secret, Redirect URI 불일치 여부를 UI와 서버 로그에 표시한다.
-- OAuth state 불일치: callback을 거부하고 재연결을 안내한다.
-- 권한 승인 거부: 계정을 연결하지 않고 다시 연결 버튼을 보여준다.
-- token 교환 실패: 원인 메시지를 로그에 남기고 계정 연결 실패로 처리한다.
+- token 검증 실패: 계정을 연결하지 않고 token 값을 노출하지 않는 일반 실패 메시지를 보여준다.
 - 만료된 token: 계정을 disconnected 상태로 표시하고 재연결 안내를 보여준다.
 - 권한 부족: media 조회, 댓글 조회, 메시지 발송 중 어떤 기능이 실패했는지 보여준다.
 - API rate limit: 에러를 로그에 남기고 다음 polling 주기에 다시 시도한다.
@@ -330,8 +306,8 @@ Polling loop는 중첩 실행을 피해야 한다. 이전 polling이 아직 실�
 
 - Instagram username/password는 절대 저장하지 않는다.
 - Access token은 SQLite에 저장하기 전에 암호화한다.
-- Access token과 App Secret을 로그에 출력하지 않는다.
-- OAuth callback에서는 `state`를 검증해 CSRF를 방지한다.
+- Access token을 로그에 출력하지 않는다.
+- token 저장 POST 요청은 관리자 로그인과 same-origin 검증으로 보호한다.
 - 관리자 UI는 최소한 `ADMIN_PASSWORD` 기반 로그인으로 보호한다.
 - HTTPS 뒤에서 실행하는 것을 전제로 한다.
 - `.env`와 SQLite DB 파일은 git에 포함하지 않는다.
@@ -344,7 +320,7 @@ Polling loop는 중첩 실행을 피해야 한다. 이전 polling이 아직 실�
 - HTTP route: Express 또는 Fastify.
 - UI: 서버 렌더링 HTML + 최소한의 client-side JavaScript.
 - DB: `better-sqlite3`.
-- OAuth: 직접 route 구현 또는 가벼운 helper 사용.
+- Instagram token 연결 route: 입력 token을 `/me`로 검증한 뒤 암호화 저장.
 - 서버 시작 시 DB schema를 생성 또는 갱신하는 migration step 실행.
 - 같은 Node process 안에서 background polling loop 실행.
 
@@ -357,11 +333,10 @@ MVP 완료 판단 전에 다음을 확인한다.
 - 깨끗한 checkout에서 서버가 시작되는지 확인한다.
 - SQLite DB 파일과 테이블이 자동 생성되는지 확인한다.
 - 관리자 로그인 없이 설정 화면에 접근할 수 없는지 확인한다.
-- Meta OAuth authorize URL이 올바르게 생성되는지 확인한다.
-- OAuth callback에서 `state` 검증이 동작하는지 확인한다.
-- OAuth code를 access token으로 교환하고 long-lived token으로 저장하는지 확인한다.
+- Dashboard token 입력 폼이 보이고 OAuth route가 노출되지 않는지 확인한다.
+- token 저장 시 `/me` 호출로 계정 metadata를 검증하는지 확인한다.
 - 유효한 token으로 계정 metadata가 표시되는지 확인한다.
-- OAuth scope가 Instagram Login용 `instagram_business_*` scope만 포함하는지 확인한다.
+- token에 Instagram Login용 `instagram_business_*` 권한이 포함되어 있는지 확인한다.
 - 게시물 목록을 가져오고 게시물을 선택할 수 있는지 확인한다.
 - 룰 생성, 수정, 일시중지, 재개, soft delete가 동작하는지 확인한다.
 - soft-deleted 룰은 실행되지 않지만 DB에는 남아 있는지 확인한다.
@@ -376,7 +351,7 @@ MVP 완료 판단 전에 다음을 확인한다.
 
 ## 남은 리스크
 
-- Meta API 동작과 권한 정책은 변경될 수 있으므로 OAuth 설정 가이드는 최신 상태로 관리해야 한다.
+- Meta API 동작과 권한 정책은 변경될 수 있으므로 token 발급 가이드는 최신 상태로 관리해야 한다.
 - 내 계정 1개가 아닌 외부 사용자 계정 연결로 확장하면 App Review와 Business Verification이 필요할 수 있다.
 - Polling 방식은 실시간이 아니다. 기본 설정에서는 최대 약 60초와 API latency만큼 응답이 지연될 수 있다.
 - Private Reply 제약은 Instagram이 강제한다. 실패한 발송은 로그에서 확인 가능해야 한다.

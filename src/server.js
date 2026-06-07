@@ -1,7 +1,6 @@
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import { createAuthRoutes } from './routes/authRoutes.js';
-import { instagramAuthRoutes } from './routes/instagramAuthRoutes.js';
 import { dashboardRoutes } from './routes/dashboardRoutes.js';
 import { ruleRoutes } from './routes/ruleRoutes.js';
 import { logRoutes } from './routes/logRoutes.js';
@@ -22,7 +21,6 @@ export function createServer({ config, db, instagramClient, poller }) {
   app.use(cookieParser());
   app.use(express.urlencoded({ extended: false }));
   app.use(createAuthRoutes(config, sessionStore));
-  app.use(instagramAuthRoutes({ config, db, instagramClient, sessionStore }));
   app.use(dashboardRoutes({ config, db, instagramClient, poller, sessionStore }));
   app.use(ruleRoutes({ config, db, sessionStore }));
   app.use(logRoutes({ config, db, sessionStore }));
